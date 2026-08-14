@@ -1,0 +1,66 @@
+{
+  "provider": "parallels",
+  "artifact_root": "/Users/replace-me/VM-Evidence",
+  "ssh_private_key": "/Users/replace-me/.ssh/vm-evidence-lab",
+  "watchdog": {
+    "ssh_seconds": 120,
+    "restore_seconds": 120,
+    "readiness_seconds": 180,
+    "checkout_seconds": 300,
+    "adapter_seconds": 1800,
+    "overall_seconds": 2400,
+    "poll_seconds": 2
+  },
+  "adapters": {
+    "replace-product": {
+      "schema_version": 1,
+      "adapter_sha": "0000000000000000000000000000000000000000",
+      "adapter_repository": "/Users/replace-me/src/product",
+      "adapter_path": "scripts/vm-evidence-adapter",
+      "safe_modes": ["replace-read-only-mode"],
+      "sources": {
+        "product": {
+          "repository": "/Users/replace-me/src/product"
+        }
+      }
+    }
+  },
+  "vms": {
+    "windows": {
+      "name": "evidence-windows",
+      "snapshot_id": "replace-with-snapshot-id",
+      "host": "evidence-windows.local",
+      "port": 22,
+      "user": "evidence",
+      "relay_spool": "C:\\Users\\evidence\\vm-evidence-spool",
+      "relay_script": "C:\\Users\\evidence\\.local\\share\\vm-evidence-lab\\windows.ps1",
+      "relay_repository_root": "C:\\Users\\evidence\\vm-evidence-sources",
+      "adapter_root": "C:\\Users\\evidence\\.local\\share\\vm-evidence-adapters",
+      "qualification": "diagnostic"
+    },
+    "linux": {
+      "name": "evidence-linux",
+      "snapshot_id": "replace-with-snapshot-id",
+      "host": "evidence-linux.local",
+      "port": 22,
+      "user": "evidence",
+      "relay_spool": "/home/evidence/vm-evidence-spool",
+      "relay_repository_root": "/home/evidence/vm-evidence-sources",
+      "adapter_root": "/home/evidence/.local/share/vm-evidence-adapters",
+      "relay_install_root": "/home/evidence/.local/share/vm-evidence-lab",
+      "qualification": "qualifying"
+    },
+    "macos": {
+      "name": "evidence-macos",
+      "snapshot_id": "replace-with-snapshot-id",
+      "host": "evidence-macos.local",
+      "port": 22,
+      "user": "evidence",
+      "relay_spool": "/Users/evidence/vm-evidence-spool",
+      "relay_repository_root": "/Users/evidence/vm-evidence-sources",
+      "adapter_root": "/Users/evidence/.local/share/vm-evidence-adapters",
+      "relay_install_root": "/Users/evidence/.local/share/vm-evidence-lab",
+      "qualification": "qualifying"
+    }
+  }
+}

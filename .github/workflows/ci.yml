@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq and ShellCheck on macOS
+        if: runner.os == 'macOS'
+        run: brew install jq shellcheck
+      - name: Run Unix contract tests
+        run: ./tests/run.sh
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Windows contract tests
+        shell: pwsh
+        run: ./tests/run-windows.ps1

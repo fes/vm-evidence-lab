@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/fes/vm-evidence-lab/schemas/result-v1.json",
+  "title": "VM evidence relay result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "status",
+    "phase",
+    "failure_class",
+    "message",
+    "adapter_id",
+    "adapter_sha",
+    "adapter_schema_version",
+    "mode",
+    "platform",
+    "resolved_sources",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string" },
+    "status": { "enum": ["running", "pass", "fail"] },
+    "phase": { "enum": ["queued", "preflight", "checkout", "adapter", "complete"] },
+    "failure_class": {
+      "type": ["string", "null"],
+      "enum": ["configuration", "provisioning", "artifact", "product", "infrastructure", null]
+    },
+    "message": { "type": "string" },
+    "adapter_id": { "type": "string" },
+    "adapter_sha": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "adapter_schema_version": { "type": "integer" },
+    "mode": { "type": "string" },
+    "platform": { "enum": ["windows", "linux", "macos"] },
+    "resolved_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "requested_sha", "resolved_sha"],
+        "properties": {
+          "id": { "type": "string" },
+          "requested_sha": { "type": "string" },
+          "resolved_sha": { "type": "string" }
+        }
+      }
+    },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

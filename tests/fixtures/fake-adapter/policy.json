@@ -1,0 +1,6 @@
+{
+  "adapter_id": "fake",
+  "schema_version": 1,
+  "modes": ["pass", "fail"],
+  "platforms": ["windows", "linux", "macos"]
+}

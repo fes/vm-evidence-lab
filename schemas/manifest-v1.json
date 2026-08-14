@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/fes/vm-evidence-lab/schemas/manifest-v1.json",
+  "title": "VM evidence host manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "platform",
+    "provider",
+    "controller_sha",
+    "relay_sha",
+    "adapter_id",
+    "adapter_sha",
+    "adapter_schema_version",
+    "mode",
+    "requested_sources",
+    "guest_result",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string" },
+    "platform": { "enum": ["windows", "linux", "macos"] },
+    "provider": { "type": ["object", "array"] },
+    "controller_sha": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "relay_sha": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "adapter_id": { "type": "string" },
+    "adapter_sha": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "adapter_schema_version": { "type": "integer" },
+    "mode": { "type": "string" },
+    "requested_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "sha"],
+        "properties": {
+          "id": { "type": "string" },
+          "sha": { "type": "string" }
+        }
+      }
+    },
+    "guest_result": { "type": "object" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
