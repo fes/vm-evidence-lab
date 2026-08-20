@@ -29,6 +29,23 @@ function Test-ExactProperties {
         -not (Compare-Object $actual $expected)
 }
 
+function Invoke-NativeCommand {
+    # Native commands (git, cargo, etc.) routinely write normal progress output
+    # to stderr. With $ErrorActionPreference = 'Stop', PowerShell promotes that
+    # stderr text into a script-terminating error regardless of stream
+    # redirection. Temporarily relax the preference so callers can rely on
+    # $LASTEXITCODE (as this script already does) to detect real failures.
+    param([scriptblock] $Command)
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Command
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Test-Identifier {
     param([object] $Value)
     $Value -is [string] -and $Value -match '^[a-z][a-z0-9-]{0,63}$'
@@ -151,18 +168,18 @@ function Stage-Sources {
             throw "Source bundle is missing: $($source.bundle)"
         }
         if (-not (Test-Path -LiteralPath (Join-Path $checkoutPath '.git'))) {
-            & git clone $bundlePath $checkoutPath *> $null
+            Invoke-NativeCommand { & git clone $bundlePath $checkoutPath *> $null }
         } else {
-            & git -C $checkoutPath fetch $bundlePath $source.sha *> $null
+            Invoke-NativeCommand { & git -C $checkoutPath fetch $bundlePath $source.sha *> $null }
         }
         if ($LASTEXITCODE -ne 0) {
             throw "Could not fetch source: $($source.id)"
         }
-        & git -C $checkoutPath checkout --detach --force $source.sha *> $null
+        Invoke-NativeCommand { & git -C $checkoutPath checkout --detach --force $source.sha *> $null }
         if ($LASTEXITCODE -ne 0) {
             throw "Could not check out source: $($source.id)"
         }
-        $resolvedSha = (& git -C $checkoutPath rev-parse HEAD).Trim()
+        $resolvedSha = (Invoke-NativeCommand { & git -C $checkoutPath rev-parse HEAD }).Trim()
         if ($LASTEXITCODE -ne 0 -or $resolvedSha -ne $source.sha) {
             throw "Resolved SHA differs from requested SHA: $($source.id)"
         }
@@ -257,9 +274,11 @@ Get-ChildItem -LiteralPath $jobsPath -Filter '*.json' -File |
                     Write-RelayResult $resultPath $job 'running' 'adapter' $null `
                         'running installed product adapter' $resolvedSources
                     try {
-                        & $adapterPath -JobPath $claimedPath `
-                            -SourceMapPath $sourceMapPath `
-                            -ArtifactDirectory $artifactPath *>> $logPath
+                        Invoke-NativeCommand {
+                            & $adapterPath -JobPath $claimedPath `
+                                -SourceMapPath $sourceMapPath `
+                                -ArtifactDirectory $artifactPath *>> $logPath
+                        }
                         if ($LASTEXITCODE -ne 0) {
                             throw "Product adapter exited with status $LASTEXITCODE"
                         }
