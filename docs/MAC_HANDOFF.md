@@ -1,5 +1,12 @@
 # Mac migration handoff
 
+Read [`PARALLELS_PLATFORM_NOTES.md`](PARALLELS_PLATFORM_NOTES.md) first if you
+are provisioning a new Apple Silicon host or debugging a guest that never
+runs a job -- it covers hardware-bound macOS VM images, missing
+Xcode-CLT/Rust on fresh macOS guests, a `prlctl exec` argv-flattening quirk on
+macOS, session-persistence differences between Windows and macOS across
+snapshot reverts, and a PowerShell native-stderr gotcha.
+
 ## 1. Pin the shared checkout
 
 Clone this repository next to the products, check out a reviewed full commit,
