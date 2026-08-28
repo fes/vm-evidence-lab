@@ -151,9 +151,11 @@ function Write-RelayResult {
     } | ConvertTo-Json -Depth 8 -Compress |
         Set-Content -LiteralPath "$Path.partial" -NoNewline
     if (Test-Path -LiteralPath $Path) {
-        [System.IO.File]::Replace("$Path.partial", $Path, $null)
+        $partialPath = (Get-Item -LiteralPath "$Path.partial").FullName
+        $destinationPath = (Get-Item -LiteralPath $Path).FullName
+        [System.IO.File]::Replace($partialPath, $destinationPath, $null)
     } else {
-        [System.IO.File]::Move("$Path.partial", $Path)
+        Move-Item -LiteralPath "$Path.partial" -Destination $Path
     }
 }
 

@@ -89,8 +89,11 @@ wait_for_ssh() {
     platform=$1
     timeout=$(watchdog_seconds ssh 120)
     poll=$(poll_seconds)
-    elapsed=0
-    while [ "$elapsed" -lt "$timeout" ]; do
+    ssh_deadline=$(($(date +%s) + timeout))
+    if [ -n "${run_deadline:-}" ] && [ "$run_deadline" -lt "$ssh_deadline" ]; then
+        ssh_deadline=$run_deadline
+    fi
+    while [ "$(date +%s)" -lt "$ssh_deadline" ]; do
         if [ "$platform" = windows ]; then
             probe='powershell.exe -NoProfile -NonInteractive -Command "exit 0"'
         else
@@ -100,7 +103,6 @@ wait_for_ssh() {
             return 0
         fi
         sleep "$poll"
-        elapsed=$((elapsed + poll))
     done
     vm_evidence_die "$platform did not become reachable within ${timeout} seconds"
 }
@@ -442,8 +444,11 @@ wait_for_host_input_stage() {
     hi_wait_stage=$3
     hi_wait_timeout=$4
     hi_wait_poll=$(poll_seconds)
-    hi_wait_elapsed=0
-    while [ "$hi_wait_elapsed" -lt "$hi_wait_timeout" ]; do
+    hi_wait_deadline=$(($(date +%s) + hi_wait_timeout))
+    if [ -n "${run_deadline:-}" ] && [ "$run_deadline" -lt "$hi_wait_deadline" ]; then
+        hi_wait_deadline=$run_deadline
+    fi
+    while [ "$(date +%s)" -lt "$hi_wait_deadline" ]; do
         if hi_wait_result=$(read_result "$hi_wait_platform" "$hi_wait_run_id" 2>/dev/null); then
             hi_wait_status=$(printf '%s' "$hi_wait_result" | jq -er '.status')
             if [ "$hi_wait_status" = fail ]; then
@@ -477,7 +482,6 @@ wait_for_host_input_stage() {
                 vm_evidence_die "Windows control plane failed reading host-input state"
         fi
         sleep "$hi_wait_poll"
-        hi_wait_elapsed=$((hi_wait_elapsed + hi_wait_poll))
     done
     vm_evidence_die "Windows host-input stage timed out: $hi_wait_stage"
 }
@@ -559,27 +563,27 @@ wait_for_result() {
     run_id=$2
     overall=$(watchdog_seconds overall 2400)
     poll=$(poll_seconds)
-    elapsed=0
     phase=
-    phase_elapsed=0
-    while [ "$elapsed" -lt "$overall" ]; do
+    result_deadline=${run_deadline:-$(($(date +%s) + overall))}
+    phase_deadline=$result_deadline
+    while [ "$(date +%s)" -lt "$result_deadline" ]; do
         if result=$(read_result "$platform" "$run_id" 2>/dev/null); then
             status=$(printf '%s' "$result" | jq -er '.status')
             current_phase=$(printf '%s' "$result" | jq -er '.phase')
             if [ "$status" = running ]; then
                 if [ "$current_phase" != "$phase" ]; then
                     phase=$current_phase
-                    phase_elapsed=0
-                else
-                    phase_elapsed=$((phase_elapsed + poll))
+                    case "$phase" in
+                        queued|preflight) phase_timeout=$(watchdog_seconds readiness 180) ;;
+                        checkout) phase_timeout=$(watchdog_seconds checkout 300) ;;
+                        adapter) phase_timeout=$(watchdog_seconds adapter 1800) ;;
+                        *) vm_evidence_die "relay reported unsupported phase: $phase" ;;
+                    esac
+                    phase_deadline=$(($(date +%s) + phase_timeout))
+                    [ "$phase_deadline" -lt "$result_deadline" ] ||
+                        phase_deadline=$result_deadline
                 fi
-                case "$phase" in
-                    queued|preflight) deadline=$(watchdog_seconds readiness 180) ;;
-                    checkout) deadline=$(watchdog_seconds checkout 300) ;;
-                    adapter) deadline=$(watchdog_seconds adapter 1800) ;;
-                    *) vm_evidence_die "relay reported unsupported phase: $phase" ;;
-                esac
-                [ "$phase_elapsed" -lt "$deadline" ] ||
+                [ "$(date +%s)" -lt "$phase_deadline" ] ||
                     vm_evidence_die "$platform relay exceeded ${phase} deadline"
             elif [ "$status" = pass ] || [ "$status" = fail ]; then
                 printf '%s\n' "$result"
@@ -593,7 +597,6 @@ wait_for_result() {
                 vm_evidence_die "$platform control plane failed reading result"
         fi
         sleep "$poll"
-        elapsed=$((elapsed + poll))
     done
     vm_evidence_die "$platform relay did not finish within ${overall} seconds"
 }
@@ -643,6 +646,7 @@ run_platform() {
     mkdir -p "$run_root"
     run_platform=$platform
     run_started=0
+    run_deadline=$(($(date +%s) + $(watchdog_seconds overall 2400)))
     trap cleanup_run EXIT HUP INT TERM
 
     reset_vm "$platform"
