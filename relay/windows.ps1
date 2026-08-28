@@ -153,7 +153,10 @@ function Write-RelayResult {
     if (Test-Path -LiteralPath $Path) {
         $partialPath = (Get-Item -LiteralPath "$Path.partial").FullName
         $destinationPath = (Get-Item -LiteralPath $Path).FullName
-        [System.IO.File]::Replace($partialPath, $destinationPath, $null)
+        $backupPath = "$destinationPath.backup"
+        Remove-Item -LiteralPath $backupPath -Force -ErrorAction Ignore
+        [System.IO.File]::Replace($partialPath, $destinationPath, $backupPath)
+        Remove-Item -LiteralPath $backupPath -Force
     } else {
         Move-Item -LiteralPath "$Path.partial" -Destination $Path
     }

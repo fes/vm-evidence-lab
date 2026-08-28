@@ -462,10 +462,14 @@ wait_for_host_input_stage() {
             [ "$hi_wait_result_status" -eq 3 ] ||
                 vm_evidence_die "Windows control plane failed reading relay result"
         fi
-        if [ -f "$temporary_root/relay-activation.status" ] &&
-            [ "$(cat "$temporary_root/relay-activation.status")" -ne 0 ]; then
-            cat "$temporary_root/relay-activation.log" >&2
-            vm_evidence_die "Windows graphical-session relay activation failed"
+        if [ -f "$temporary_root/relay-activation.status" ]; then
+            hi_wait_relay_status=$(cat "$temporary_root/relay-activation.status")
+            if [ "$hi_wait_relay_status" -ne 0 ]; then
+                cat "$temporary_root/relay-activation.log" >&2
+                vm_evidence_die "Windows graphical-session relay activation failed"
+            fi
+            vm_evidence_die \
+                "Windows graphical-session relay exited before host-input stage: $hi_wait_stage"
         fi
         if hi_wait_state=$(read_host_input_stage \
             "$hi_wait_platform" "$hi_wait_run_id" "$hi_wait_stage" 2>/dev/null); then
