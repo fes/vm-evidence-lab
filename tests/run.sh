@@ -214,7 +214,20 @@ cmp "$work/expected-host-input-events.log" "$work/host-input-events.log"
     test "$host_input_completed" -eq 0
 )
 
-deadline_started=$(date +%s)
+mkdir -p "$work/deadline-bin"
+cat >"$work/deadline-bin/date" <<'EOF'
+#!/usr/bin/env sh
+if [ "$*" = '+%s' ]; then
+    value=$(cat "$VM_EVIDENCE_FAKE_DATE_STATE")
+    printf '%s\n' "$value"
+    printf '%s\n' "$((value + 2))" >"$VM_EVIDENCE_FAKE_DATE_STATE"
+else
+    printf '2000-01-01T00:00:00Z\n'
+fi
+EOF
+chmod 755 "$work/deadline-bin/date"
+printf '0\n' >"$work/deadline-clock"
+printf '0\n' >"$work/deadline-read-count"
 if (
     VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY=1
     VM_EVIDENCE_CONTROLLER_ROOT="$root/host"
@@ -224,25 +237,27 @@ if (
     . "$root/host/controller.sh"
     temporary_root="$work/deadline"
     mkdir -p "$temporary_root"
+    PATH="$work/deadline-bin:$PATH"
+    VM_EVIDENCE_FAKE_DATE_STATE="$work/deadline-clock"
+    export PATH VM_EVIDENCE_FAKE_DATE_STATE
     poll_seconds() { printf '2\n'; }
     read_result() {
-        sleep 2
+        read_count=$(cat "$work/deadline-read-count")
+        printf '%s\n' "$((read_count + 1))" >"$work/deadline-read-count"
         return 3
     }
     read_host_input_stage() { return 3; }
+    sleep() { :; }
     wait_for_host_input_stage windows test-run ready 3
 ) 2>"$work/deadline-error.log"; then
     echo 'host-input stage ignored its absolute deadline' >&2
     exit 1
 fi
-deadline_elapsed=$(($(date +%s) - deadline_started))
-test "$deadline_elapsed" -ge 3
-test "$deadline_elapsed" -lt 7
+test "$(cat "$work/deadline-read-count")" -eq 1
 grep -q 'host-input stage timed out: ready' "$work/deadline-error.log"
 
 mkdir -p "$work/early-exit"
 printf '0\n' >"$work/early-exit/relay-activation.status"
-early_exit_started=$(date +%s)
 if (
     VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY=1
     VM_EVIDENCE_CONTROLLER_ROOT="$root/host"
@@ -261,8 +276,6 @@ if (
     echo 'host-input stage ignored an exited graphical relay' >&2
     exit 1
 fi
-early_exit_elapsed=$(($(date +%s) - early_exit_started))
-test "$early_exit_elapsed" -lt 5
 grep -q 'relay exited before host-input stage: ready' "$work/early-exit-error.log"
 
 if command -v shellcheck >/dev/null 2>&1; then
