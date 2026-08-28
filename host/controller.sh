@@ -501,9 +501,18 @@ drive_host_input() {
         else
             return $?
         fi
-        printf '%s' "$stage" | jq -r '.events[] | [.type, .code] | @tsv' |
-        while IFS="$(printf '\t')" read -r event_type code; do
-            provider_send_input_event "$(vm_name "$platform")" "$event_type" "$code"
+        event_index=0
+        event_count=$(printf '%s' "$stage" | jq -er '.events | length')
+        while [ "$event_index" -lt "$event_count" ]; do
+            event=$(printf '%s' "$stage" |
+                jq -c --argjson index "$event_index" '.events[$index]')
+            event_type=$(printf '%s' "$event" | jq -er '.type')
+            code=$(printf '%s' "$event" | jq -er '.code')
+            if ! provider_send_input_event \
+                "$(vm_name "$platform")" "$event_type" "$code"; then
+                return 21
+            fi
+            event_index=$((event_index + 1))
         done
         stage_index=$((stage_index + 1))
     done
