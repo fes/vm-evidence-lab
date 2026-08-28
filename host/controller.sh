@@ -514,6 +514,11 @@ drive_host_input() {
         else
             return $?
         fi
+        hi_drive_settle_seconds=$(printf '%s' "$hi_drive_stage_json" |
+            jq -er '.settle_seconds')
+        if [ "$hi_drive_settle_seconds" -gt 0 ]; then
+            sleep "$hi_drive_settle_seconds"
+        fi
         hi_drive_event_index=0
         hi_drive_event_count=$(printf '%s' "$hi_drive_stage_json" |
             jq -er '.events | length')
