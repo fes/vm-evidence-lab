@@ -782,6 +782,8 @@ EOF
 }
 
 if [ "${VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY:-0}" -eq 1 ]; then
+    # The exit branch is the direct-execution fallback.
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || exit 0
 fi
 
