@@ -46,6 +46,17 @@ provider_exec_current_user() {
     prlctl exec "$vm_name" --current-user "$@"
 }
 
+provider_send_input_event() {
+    vm_name=$1
+    event_type=$2
+    code=$3
+    case "$event_type" in
+        key|pointer-button) ;;
+        *) vm_evidence_die "unsupported Parallels input event type: $event_type" ;;
+    esac
+    prlctl send-key-event "$vm_name" --key "$code"
+}
+
 provider_metadata() {
     version=$(prlctl --version 2>/dev/null || printf unknown)
     vm=$(prlctl list "$1" --json)

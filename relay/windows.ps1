@@ -221,6 +221,7 @@ Get-ChildItem -LiteralPath $jobsPath -Filter '*.json' -File |
         $queuedPath = $_.FullName
         $lockPath = Join-Path $locksPath $_.Name
         $claimedPath = Join-Path $jobsPath ".running-$($_.Name)"
+        $relayPidPath = $null
         try {
             New-Item -ItemType Directory -Path $lockPath -ErrorAction Stop | Out-Null
         } catch {
@@ -247,8 +248,11 @@ Get-ChildItem -LiteralPath $jobsPath -Filter '*.json' -File |
             $logPath = Join-Path $logsPath "$($job.run_id).log"
             $artifactPath = Join-Path $artifactsPath $job.run_id
             $sourceMapPath = Join-Path $artifactPath 'source-map.json'
+            $relayPidPath = Join-Path $artifactPath 'relay.pid'
             $resolvedSources = @()
             New-Item -ItemType Directory -Force -Path $artifactPath | Out-Null
+            Set-Content -LiteralPath "$relayPidPath.partial" -Value $PID -NoNewline
+            Move-Item -LiteralPath "$relayPidPath.partial" -Destination $relayPidPath -Force
             Write-RelayResult $resultPath $job 'running' 'queued' $null 'relay accepted job' @()
 
             try {
@@ -303,6 +307,9 @@ Get-ChildItem -LiteralPath $jobsPath -Filter '*.json' -File |
                 $_ | Out-String | Add-Content -LiteralPath $logPath
             }
         } finally {
+            if ($relayPidPath) {
+                Remove-Item -LiteralPath $relayPidPath -Force -ErrorAction Ignore
+            }
             $prefix = if ($accepted) { 'processed-' } else { 'rejected-' }
             Move-Item -LiteralPath $claimedPath `
                 -Destination (Join-Path $jobsPath "$prefix$($_.Name)") -Force

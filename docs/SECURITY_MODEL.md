@@ -21,6 +21,9 @@ Candidate product commits and job payloads are untrusted.
   `adapter-version.txt`.
 - Product adapters reject unknown payload fields and map modes to fixed
   repository-owned entry points.
+- Optional host-input plans come only from the configured adapter repository at
+  its pinned commit. The controller accepts a narrow set of non-modified keys
+  and a left-button click; jobs and candidate source cannot add or alter events.
 - Git bundles avoid guest repository credentials.
 
 ## Physical devices and persistent state
@@ -51,3 +54,9 @@ The controller does not silently retry product failures. It does not execute
 opaque commands, install drivers, switch USB drivers, or infer that a
 read-only pass authorizes mutation. Provider snapshots are a clean-software
 mechanism, not recovery for external hardware state.
+
+Host-input readiness files are candidate-produced evidence, not an independent
+focus oracle. Their authority is limited to advancing a fixed, non-destructive
+adapter-owned plan inside an already isolated guest. Per-run paths, embedded
+run IDs, atomic publication, ordered stages, and bounded deadlines prevent
+stale state from advancing a later run.

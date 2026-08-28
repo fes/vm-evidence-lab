@@ -13,6 +13,7 @@ must implement:
 | `provider_stop <name>` | Stop the guest after evidence collection. |
 | `provider_capture <name> <path>` | Capture the guest display from the host. |
 | `provider_exec_current_user <name> ...` | Execute only trusted controller commands in the logged-in guest session. |
+| `provider_send_input_event <name> <type> <code>` | Optionally inject one controller-validated event from a pinned adapter plan. |
 | `provider_metadata <name>` | Emit JSON including provider/version and VM metadata. |
 
 The controller owns SSH/SCP transport, source bundles, relays, adapters, jobs,
@@ -22,6 +23,12 @@ results, and manifests. Providers must not interpret product payloads.
 that evidence ran in the logged-in desktop. Providers without an equivalent
 must arrange an installed graphical-session trigger and implement this
 function as a narrow activation operation, not arbitrary candidate execution.
+
+`provider_send_input_event` is required only when a pinned adapter includes a
+`host-input.json` plan for the selected mode. Providers must reject unsupported
+event types. The controller validates codes against a deliberately narrow
+allowlist before VM startup; providers never accept events from the job or
+candidate source.
 
 A reset is permitted only while external physical devices are disconnected
 and no product process is active. Provider snapshots reset guest software; they

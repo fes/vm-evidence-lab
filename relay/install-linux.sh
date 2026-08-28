@@ -13,6 +13,11 @@ cp "$(dirname -- "$0")/common.sh" "$4/common.sh"
 cp "$(dirname -- "$0")/unix.sh" "$4/unix.sh"
 chmod 755 "$4/common.sh" "$4/unix.sh"
 
+systemctl --user disable --now festerm-vm-evidence-relay.path 2>/dev/null || true
+systemctl --user stop festerm-vm-evidence-relay.service 2>/dev/null || true
+rm -f "$service_root/festerm-vm-evidence-relay.path" \
+    "$service_root/festerm-vm-evidence-relay.service"
+
 cat >"$service_root/vm-evidence-relay.service" <<EOF
 [Unit]
 Description=VM evidence graphical-session relay

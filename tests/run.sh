@@ -21,6 +21,19 @@ for command in git jq "$python_command"; do
 done
 
 "$python_command" "$root/tests/test_contract.py"
+"$root/host/validate-host-input.sh" "$root/tests/fixtures/host-input-valid.json"
+jq '.stages[0].events[1].code = 1' \
+    "$root/tests/fixtures/host-input-valid.json" >"$work/invalid-host-input.json"
+if "$root/host/validate-host-input.sh" "$work/invalid-host-input.json"; then
+    echo 'host-input validation accepted a wildcard key code' >&2
+    exit 1
+fi
+jq '.unexpected = true' "$root/tests/fixtures/host-input-valid.json" \
+    >"$work/invalid-host-input.json"
+if "$root/host/validate-host-input.sh" "$work/invalid-host-input.json"; then
+    echo 'host-input validation accepted an unknown field' >&2
+    exit 1
+fi
 
 cp "$root/tests/fixtures/fake-adapter/policy.json" "$work/adapters/fake/policy.json"
 cp "$root/tests/fixtures/fake-adapter/linux.sh" "$work/adapters/fake/linux.sh"
@@ -144,12 +157,17 @@ export VM_EVIDENCE_FAKE_PROVIDER_LOG
     provider_vm_exists evidence-linux
     provider_start evidence-linux
     provider_reset evidence-linux snapshot-1
+    provider_send_input_event evidence-linux key 23
+    provider_send_input_event evidence-linux pointer-button 178
 )
 grep -qx 'start evidence-linux' "$work/provider.log"
 grep -qx 'snapshot-switch evidence-linux --id snapshot-1' "$work/provider.log"
+grep -qx 'send-key-event evidence-linux --key 23' "$work/provider.log"
+grep -qx 'send-key-event evidence-linux --key 178' "$work/provider.log"
 
 if command -v shellcheck >/dev/null 2>&1; then
     shellcheck "$root/host/controller.sh" "$root/host/lib.sh" \
+        "$root/host/validate-host-input.sh" \
         "$root/providers/parallels.sh" "$root/relay/common.sh" \
         "$root/relay/unix.sh" "$root/relay/install-linux.sh" \
         "$root/relay/install-macos.sh" "$root/tests/run.sh"

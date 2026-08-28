@@ -51,6 +51,31 @@
         }
       }
     },
+    "host_input": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["engaged"],
+          "properties": {
+            "engaged": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["engaged", "descriptor_sha256", "completed"],
+          "properties": {
+            "engaged": { "const": true },
+            "descriptor_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "completed": { "type": "boolean" }
+          }
+        }
+      ]
+    },
     "guest_result": { "type": "object" },
     "created_at": { "type": "string", "format": "date-time" }
   }

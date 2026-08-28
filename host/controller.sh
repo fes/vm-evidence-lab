@@ -21,7 +21,7 @@ poll_seconds() {
 
 load_config() {
     [ -f "$config_path" ] || vm_evidence_die "configuration not found: $config_path"
-    for command in git jq scp ssh uuidgen; do
+    for command in git jq scp shasum ssh uuidgen; do
         vm_evidence_require_command "$command"
     done
     jq -e '
@@ -253,6 +253,38 @@ sync_adapter() {
     rm -rf "$adapter_stage"
 }
 
+prepare_host_input() {
+    platform=$1
+    request=$2
+    output=$3
+    host_input_engaged=0
+    host_input_completed=0
+    host_input_descriptor_sha256=
+    [ "$platform" = windows ] || return 0
+
+    adapter_id=$(jq -er '.adapter_id' "$request")
+    mode=$(jq -er '.mode' "$request")
+    adapter_repository=$(jq -er --arg adapter "$adapter_id" \
+        '.adapters[$adapter].adapter_repository' "$config_path")
+    adapter_path=$(jq -er --arg adapter "$adapter_id" \
+        '.adapters[$adapter].adapter_path' "$config_path")
+    adapter_sha=$(jq -er --arg adapter "$adapter_id" \
+        '.adapters[$adapter].adapter_sha' "$config_path")
+    vm_evidence_full_sha "$adapter_repository" "$adapter_sha" >/dev/null
+    if ! git -C "$adapter_repository" cat-file -e \
+        "$adapter_sha:$adapter_path/host-input.json" 2>/dev/null; then
+        return 0
+    fi
+    git -C "$adapter_repository" show \
+        "$adapter_sha:$adapter_path/host-input.json" >"$output"
+    "$script_dir/validate-host-input.sh" "$output" ||
+        vm_evidence_die "invalid pinned host-input descriptor: $adapter_id/$mode"
+    jq -e --arg mode "$mode" '(.modes | index($mode)) != null' "$output" >/dev/null ||
+        return 0
+    host_input_engaged=1
+    host_input_descriptor_sha256=$(shasum -a 256 "$output" | awk '{print $1}')
+}
+
 quarantine_stale_jobs() {
     platform=$1
     spool=$(vm_field "$platform" relay_spool)
@@ -374,19 +406,120 @@ publish_job() {
             guest_scp "$platform" "$temporary_root/job.json" "$spool\\jobs\\.$run_id.partial"
             guest_windows_powershell "$platform" \
                 "Move-Item -LiteralPath '$spool\\jobs\\.$run_id.partial' -Destination '$spool\\jobs\\$run_id.json'"
-            provider_exec_current_user "$(vm_name "$platform")" \
-                powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
-                "$(vm_field "$platform" relay_script)" \
-                -Spool "$spool" \
-                -RepositoryRoot "$(vm_field "$platform" relay_repository_root)" \
-                -AdapterRoot "$(vm_field "$platform" adapter_root)" \
-                -Platform windows
+            (
+                set +e
+                provider_exec_current_user "$(vm_name "$platform")" \
+                    powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
+                    "$(vm_field "$platform" relay_script)" \
+                    -Spool "$spool" \
+                    -RepositoryRoot "$(vm_field "$platform" relay_repository_root)" \
+                    -AdapterRoot "$(vm_field "$platform" adapter_root)" \
+                    -Platform windows \
+                    >"$temporary_root/relay-activation.log" 2>&1
+                printf '%s\n' "$?" >"$temporary_root/relay-activation.status"
+            ) &
+            relay_activation_pid=$!
             ;;
         *)
             guest_scp "$platform" "$temporary_root/job.json" "$spool/jobs/.$run_id.partial"
             guest_ssh "$platform" "mv '$spool/jobs/.$run_id.partial' '$spool/jobs/$run_id.json'"
             ;;
     esac
+}
+
+read_host_input_stage() {
+    platform=$1
+    run_id=$2
+    stage=$3
+    spool=$(vm_field "$platform" relay_spool)
+    guest_windows_powershell "$platform" \
+        "if (Test-Path -LiteralPath '$spool\\artifacts\\$run_id\\host-input\\$stage.json') { Get-Content -Raw -LiteralPath '$spool\\artifacts\\$run_id\\host-input\\$stage.json'; exit 0 }; exit 3"
+}
+
+wait_for_host_input_stage() {
+    platform=$1
+    run_id=$2
+    stage=$3
+    timeout=$4
+    poll=$(poll_seconds)
+    elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if result=$(read_result "$platform" "$run_id" 2>/dev/null); then
+            status=$(printf '%s' "$result" | jq -er '.status')
+            if [ "$status" = fail ]; then
+                printf '%s\n' "$result" >"$temporary_root/early-guest-result.json"
+                return 20
+            elif [ "$status" = pass ]; then
+                vm_evidence_die "Windows relay completed before host-input stage: $stage"
+            fi
+        else
+            result_status=$?
+            [ "$result_status" -eq 3 ] ||
+                vm_evidence_die "Windows control plane failed reading relay result"
+        fi
+        if [ -f "$temporary_root/relay-activation.status" ] &&
+            [ "$(cat "$temporary_root/relay-activation.status")" -ne 0 ]; then
+            cat "$temporary_root/relay-activation.log" >&2
+            vm_evidence_die "Windows graphical-session relay activation failed"
+        fi
+        if state=$(read_host_input_stage "$platform" "$run_id" "$stage" 2>/dev/null); then
+            printf '%s' "$state" | jq -e --arg run_id "$run_id" --arg stage "$stage" '
+                (keys | sort) == (["run_id", "schema_version", "stage"] | sort) and
+                .schema_version == 1 and .run_id == $run_id and .stage == $stage
+            ' >/dev/null ||
+                vm_evidence_die "invalid host-input state for stage: $stage"
+            return 0
+        else
+            state_status=$?
+            [ "$state_status" -eq 3 ] ||
+                vm_evidence_die "Windows control plane failed reading host-input state"
+        fi
+        sleep "$poll"
+        elapsed=$((elapsed + poll))
+    done
+    vm_evidence_die "Windows host-input stage timed out: $stage"
+}
+
+drive_host_input() {
+    platform=$1
+    run_id=$2
+    descriptor=$3
+    initial_timeout=$(jq -er '.initial_timeout_seconds' "$descriptor")
+    stage_timeout=$(jq -er '.stage_timeout_seconds' "$descriptor")
+    stage_index=0
+    stage_count=$(jq -er '.stages | length' "$descriptor")
+    while [ "$stage_index" -lt "$stage_count" ]; do
+        stage=$(jq -c --argjson index "$stage_index" '.stages[$index]' "$descriptor")
+        stage_name=$(printf '%s' "$stage" | jq -er '.wait_for')
+        if [ "$stage_index" -eq 0 ]; then
+            timeout=$initial_timeout
+        else
+            timeout=$stage_timeout
+        fi
+        if wait_for_host_input_stage "$platform" "$run_id" "$stage_name" "$timeout"; then
+            :
+        else
+            return $?
+        fi
+        printf '%s' "$stage" | jq -r '.events[] | [.type, .code] | @tsv' |
+        while IFS="$(printf '\t')" read -r event_type code; do
+            provider_send_input_event "$(vm_name "$platform")" "$event_type" "$code"
+        done
+        stage_index=$((stage_index + 1))
+    done
+    host_input_completed=1
+}
+
+finish_relay_activation() {
+    if [ -n "${relay_activation_pid:-}" ]; then
+        wait "$relay_activation_pid"
+        relay_status=$(cat "$temporary_root/relay-activation.status")
+        if [ "$relay_status" -ne 0 ]; then
+            cat "$temporary_root/relay-activation.log" >&2
+            vm_evidence_die "Windows graphical-session relay activation failed"
+        fi
+        relay_activation_pid=
+    fi
 }
 
 read_result() {
@@ -453,6 +586,16 @@ cleanup_run() {
     exit_status=$?
     trap - EXIT HUP INT TERM
     set +e
+    if [ -n "${relay_activation_pid:-}" ]; then
+        if [ "${run_platform:-}" = windows ] && [ -n "${run_id:-}" ]; then
+            spool=$(vm_field windows relay_spool)
+            guest_windows_powershell windows \
+                "\$path = '$spool\\artifacts\\$run_id\\relay.pid'; if (Test-Path -LiteralPath \$path) { \$relayPid = [int](Get-Content -Raw -LiteralPath \$path); taskkill.exe /PID \$relayPid /T /F 2>\$null | Out-Null }" \
+                >/dev/null 2>&1
+        fi
+        kill "$relay_activation_pid" >/dev/null 2>&1
+        wait "$relay_activation_pid" >/dev/null 2>&1
+    fi
     if [ "${run_started:-0}" -eq 1 ]; then
         capture_vm "$run_platform" "$run_root/desktop-final.png"
         provider_metadata "$(vm_name "$run_platform")" >"$run_root/provider-metadata.json"
@@ -478,6 +621,7 @@ run_platform() {
     run_root="$artifact_root/$run_id"
     lock_path="$artifact_root/.locks/lab"
     temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/vm-evidence.XXXXXX")
+    relay_activation_pid=
     vm_evidence_acquire_lock "$lock_path"
     [ ! -e "$run_root" ] || vm_evidence_die "run directory exists: $run_root"
     mkdir -p "$run_root"
@@ -493,10 +637,25 @@ run_platform() {
     requested_relay_sha=$(relay_sha)
     sync_relay "$platform" "$requested_relay_sha"
     sync_adapter "$platform" "$adapter_id"
+    prepare_host_input "$platform" "$request" "$temporary_root/host-input.json"
     quarantine_stale_jobs "$platform"
     capture_vm "$platform" "$run_root/desktop-ready.png"
     publish_job "$platform" "$request" "$run_id" "$temporary_root"
-    result=$(wait_for_result "$platform" "$run_id")
+    if [ "$host_input_engaged" -eq 1 ]; then
+        if drive_host_input "$platform" "$run_id" "$temporary_root/host-input.json"; then
+            :
+        else
+            host_input_status=$?
+            [ "$host_input_status" -eq 20 ] ||
+                vm_evidence_die "Windows host-input driver failed"
+        fi
+    fi
+    if [ -f "$temporary_root/early-guest-result.json" ]; then
+        result=$(cat "$temporary_root/early-guest-result.json")
+    else
+        result=$(wait_for_result "$platform" "$run_id")
+    fi
+    finish_relay_activation
     printf '%s\n' "$result" >"$run_root/guest-result.json"
     provider_metadata "$(vm_name "$platform")" >"$run_root/provider-metadata.json"
     jq -n \
@@ -510,6 +669,9 @@ run_platform() {
             '.adapters[$adapter].adapter_sha' "$config_path")" \
         --argjson adapter_schema_version "$(jq -er '.adapter_schema_version' "$request")" \
         --arg mode "$mode" \
+        --argjson host_input_engaged "$host_input_engaged" \
+        --argjson host_input_completed "$host_input_completed" \
+        --arg host_input_descriptor_sha256 "$host_input_descriptor_sha256" \
         --arg created_at "$(date -u +%FT%TZ)" \
         --argjson requested_sources "$(jq -c '[.sources[] | {id, sha}]' "$request")" \
         --slurpfile provider "$run_root/provider-metadata.json" \
@@ -526,6 +688,15 @@ run_platform() {
           adapter_schema_version: $adapter_schema_version,
           mode: $mode,
           requested_sources: $requested_sources,
+          host_input: (
+            if $host_input_engaged == 1 then {
+              engaged: true,
+              descriptor_sha256: $host_input_descriptor_sha256,
+              completed: ($host_input_completed == 1)
+            } else {
+              engaged: false
+            } end
+          ),
           guest_result: $guest[0],
           created_at: $created_at
         }' >"$run_root/manifest.json"

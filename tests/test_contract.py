@@ -68,6 +68,16 @@ class ContractTests(unittest.TestCase):
                 "requested_sources",
             }.issubset(required)
         )
+        self.assertIn("host_input", document["properties"])
+
+    def test_host_input_manifest_is_explicit_and_bounded(self) -> None:
+        document = json.loads((SCHEMAS / "manifest-v1.json").read_text(encoding="utf-8"))
+        host_input = document["properties"]["host_input"]
+        self.assertEqual(len(host_input["oneOf"]), 2)
+        self.assertEqual(
+            host_input["oneOf"][1]["properties"]["descriptor_sha256"]["pattern"],
+            "^[0-9a-f]{64}$",
+        )
 
 
 if __name__ == "__main__":

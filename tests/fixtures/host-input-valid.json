@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "platform": "windows",
+  "modes": ["os-input-smoke"],
+  "initial_timeout_seconds": 60,
+  "stage_timeout_seconds": 10,
+  "stages": [
+    {
+      "wait_for": "ready",
+      "events": [
+        {"type": "pointer-button", "code": 178},
+        {"type": "key", "code": 23}
+      ]
+    },
+    {
+      "wait_for": "confirmed",
+      "events": [
+        {"type": "key", "code": 98}
+      ]
+    }
+  ]
+}
