@@ -34,6 +34,7 @@ if "$root/host/validate-host-input.sh" "$work/invalid-host-input.json"; then
     echo 'host-input validation accepted an unknown field' >&2
     exit 1
 fi
+echo '::notice::validation contracts passed'
 
 cp "$root/tests/fixtures/fake-adapter/policy.json" "$work/adapters/fake/policy.json"
 cp "$root/tests/fixtures/fake-adapter/linux.sh" "$work/adapters/fake/linux.sh"
@@ -88,6 +89,7 @@ jq -e --arg sha "$sha" '
 test -f "$work/spool/jobs/processed-pass.json"
 test -f "$work/spool/artifacts/pass-run/fake-result.txt"
 test ! -e "$work/spool/results/pass-run.json.partial"
+echo '::notice::successful relay contract passed'
 
 sed \
     -e 's/pass-run/adapter-mismatch-run/g' \
@@ -118,6 +120,7 @@ VM_EVIDENCE_PLATFORM=linux \
 
 jq -e '.status == "fail" and .failure_class == "product"' \
     "$work/spool/results/fail-run.json" >/dev/null
+echo '::notice::relay failure contracts passed'
 
 (
     # shellcheck disable=SC1091
@@ -134,6 +137,7 @@ jq -e '.status == "fail" and .failure_class == "product"' \
     vm_evidence_release_lock "$lock"
     test ! -e "$lock"
 )
+echo '::notice::bundle and lock contracts passed'
 
 cat >"$work/bin/prlctl" <<'EOF'
 #!/usr/bin/env sh
@@ -164,6 +168,7 @@ grep -qx 'start evidence-linux' "$work/provider.log"
 grep -qx 'snapshot-switch evidence-linux --id snapshot-1' "$work/provider.log"
 grep -qx 'send-key-event evidence-linux --key 23' "$work/provider.log"
 grep -qx 'send-key-event evidence-linux --key 178' "$work/provider.log"
+echo '::notice::provider contracts passed'
 
 (
     VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY=1
@@ -191,6 +196,7 @@ evidence-windows key 23
 evidence-windows key 98
 EOF
 cmp "$work/expected-host-input-events.log" "$work/host-input-events.log"
+echo '::notice::host-input ordering contract passed'
 
 (
     VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY=1
@@ -213,6 +219,7 @@ cmp "$work/expected-host-input-events.log" "$work/host-input-events.log"
     fi
     test "$host_input_completed" -eq 0
 )
+echo '::notice::host-input failure contract passed'
 
 mkdir -p "$work/deadline-bin"
 cat >"$work/deadline-bin/date" <<'EOF'
@@ -262,6 +269,7 @@ if ! grep -q 'host-input stage timed out: ready' "$work/deadline-error.log"; the
     cat "$work/deadline-error.log" >&2
     exit 1
 fi
+echo '::notice::absolute deadline contract passed'
 
 mkdir -p "$work/early-exit"
 printf '0\n' >"$work/early-exit/relay-activation.status"
@@ -288,13 +296,16 @@ if ! grep -q 'relay exited before host-input stage: ready' "$work/early-exit-err
     cat "$work/early-exit-error.log" >&2
     exit 1
 fi
+echo '::notice::relay fail-fast contract passed'
 
 if command -v shellcheck >/dev/null 2>&1; then
+    echo '::notice::starting ShellCheck'
     shellcheck "$root/host/controller.sh" "$root/host/lib.sh" \
         "$root/host/validate-host-input.sh" \
         "$root/providers/parallels.sh" "$root/relay/common.sh" \
         "$root/relay/unix.sh" "$root/relay/install-linux.sh" \
         "$root/relay/install-macos.sh" "$root/tests/run.sh"
 fi
+echo '::notice::ShellCheck passed'
 
 echo 'Unix contract tests passed.'
