@@ -253,8 +253,15 @@ if (
     echo 'host-input stage ignored its absolute deadline' >&2
     exit 1
 fi
-test "$(cat "$work/deadline-read-count")" -eq 1
-grep -q 'host-input stage timed out: ready' "$work/deadline-error.log"
+if [ "$(cat "$work/deadline-read-count")" -ne 1 ]; then
+    echo '::error::absolute deadline performed an unexpected number of polls' >&2
+    exit 1
+fi
+if ! grep -q 'host-input stage timed out: ready' "$work/deadline-error.log"; then
+    echo '::error::absolute deadline did not report the expected stage timeout' >&2
+    cat "$work/deadline-error.log" >&2
+    exit 1
+fi
 
 mkdir -p "$work/early-exit"
 printf '0\n' >"$work/early-exit/relay-activation.status"
@@ -276,7 +283,11 @@ if (
     echo 'host-input stage ignored an exited graphical relay' >&2
     exit 1
 fi
-grep -q 'relay exited before host-input stage: ready' "$work/early-exit-error.log"
+if ! grep -q 'relay exited before host-input stage: ready' "$work/early-exit-error.log"; then
+    echo '::error::relay exit did not trigger the expected fail-fast path' >&2
+    cat "$work/early-exit-error.log" >&2
+    exit 1
+fi
 
 if command -v shellcheck >/dev/null 2>&1; then
     shellcheck "$root/host/controller.sh" "$root/host/lib.sh" \
