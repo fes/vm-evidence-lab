@@ -168,10 +168,10 @@ relay_execute_job() {
         return 1
     }
     adapter_path="$relay_adapter_root/$adapter_id/$relay_platform.sh"
-    [ -f "$adapter_path" ] && [ -x "$adapter_path" ] || {
+    if [ ! -f "$adapter_path" ] || [ ! -x "$adapter_path" ]; then
         failure_class=configuration
         return 1
-    }
+    fi
     relay_write_result running adapter '' 'running installed product adapter'
     if "$adapter_path" "$job_path" "$source_map_path" "$artifact_path"; then
         return 0
