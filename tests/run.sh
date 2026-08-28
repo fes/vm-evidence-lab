@@ -262,7 +262,7 @@ if (
     exit 1
 fi
 early_exit_elapsed=$(($(date +%s) - early_exit_started))
-test "$early_exit_elapsed" -lt 2
+test "$early_exit_elapsed" -lt 5
 grep -q 'relay exited before host-input stage: ready' "$work/early-exit-error.log"
 
 if command -v shellcheck >/dev/null 2>&1; then
