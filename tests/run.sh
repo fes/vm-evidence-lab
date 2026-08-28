@@ -300,11 +300,17 @@ echo '::notice::relay fail-fast contract passed'
 
 if command -v shellcheck >/dev/null 2>&1; then
     echo '::notice::starting ShellCheck'
-    shellcheck "$root/host/controller.sh" "$root/host/lib.sh" \
+    if ! shellcheck "$root/host/controller.sh" "$root/host/lib.sh" \
         "$root/host/validate-host-input.sh" \
         "$root/providers/parallels.sh" "$root/relay/common.sh" \
         "$root/relay/unix.sh" "$root/relay/install-linux.sh" \
-        "$root/relay/install-macos.sh" "$root/tests/run.sh"
+        "$root/relay/install-macos.sh" "$root/tests/run.sh" \
+        >"$work/shellcheck.log" 2>&1; then
+        while IFS= read -r line; do
+            printf '::error::ShellCheck: %s\n' "$line" >&2
+        done <"$work/shellcheck.log"
+        exit 1
+    fi
 fi
 echo '::notice::ShellCheck passed'
 
