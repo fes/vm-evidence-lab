@@ -165,6 +165,55 @@ grep -qx 'snapshot-switch evidence-linux --id snapshot-1' "$work/provider.log"
 grep -qx 'send-key-event evidence-linux --key 23' "$work/provider.log"
 grep -qx 'send-key-event evidence-linux --key 178' "$work/provider.log"
 
+(
+    VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY=1
+    VM_EVIDENCE_CONTROLLER_ROOT="$root/host"
+    export VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY
+    export VM_EVIDENCE_CONTROLLER_ROOT
+    # shellcheck disable=SC1090
+    . "$root/host/controller.sh"
+    temporary_root="$work"
+    host_input_completed=0
+    read_result() { return 3; }
+    read_host_input_stage() {
+        printf '{"schema_version":1,"run_id":"test-run","stage":"%s"}\n' "$3"
+    }
+    vm_name() { printf 'evidence-windows\n'; }
+    provider_send_input_event() {
+        printf '%s %s %s\n' "$1" "$2" "$3" >>"$work/host-input-events.log"
+    }
+    drive_host_input windows test-run "$root/tests/fixtures/host-input-valid.json"
+    test "$host_input_completed" -eq 1
+)
+cat >"$work/expected-host-input-events.log" <<'EOF'
+evidence-windows pointer-button 178
+evidence-windows key 23
+evidence-windows key 98
+EOF
+cmp "$work/expected-host-input-events.log" "$work/host-input-events.log"
+
+(
+    VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY=1
+    VM_EVIDENCE_CONTROLLER_ROOT="$root/host"
+    export VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY
+    export VM_EVIDENCE_CONTROLLER_ROOT
+    # shellcheck disable=SC1090
+    . "$root/host/controller.sh"
+    temporary_root="$work"
+    host_input_completed=0
+    read_result() { return 3; }
+    read_host_input_stage() {
+        printf '{"schema_version":1,"run_id":"test-run","stage":"%s"}\n' "$3"
+    }
+    vm_name() { printf 'evidence-windows\n'; }
+    provider_send_input_event() { [ "$3" -ne 23 ]; }
+    if drive_host_input windows test-run "$root/tests/fixtures/host-input-valid.json"; then
+        echo 'host-input driver ignored an event failure' >&2
+        exit 1
+    fi
+    test "$host_input_completed" -eq 0
+)
+
 if command -v shellcheck >/dev/null 2>&1; then
     shellcheck "$root/host/controller.sh" "$root/host/lib.sh" \
         "$root/host/validate-host-input.sh" \

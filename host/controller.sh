@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
+script_dir=${VM_EVIDENCE_CONTROLLER_ROOT:-$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)}
 repository_root=$(unset CDPATH; cd -- "$script_dir/.." && pwd)
 # shellcheck source=host/lib.sh
 . "$script_dir/lib.sh"
@@ -428,33 +428,33 @@ publish_job() {
 }
 
 read_host_input_stage() {
-    platform=$1
-    run_id=$2
-    stage=$3
-    spool=$(vm_field "$platform" relay_spool)
-    guest_windows_powershell "$platform" \
-        "if (Test-Path -LiteralPath '$spool\\artifacts\\$run_id\\host-input\\$stage.json') { Get-Content -Raw -LiteralPath '$spool\\artifacts\\$run_id\\host-input\\$stage.json'; exit 0 }; exit 3"
+    hi_read_platform=$1
+    hi_read_run_id=$2
+    hi_read_stage=$3
+    hi_read_spool=$(vm_field "$hi_read_platform" relay_spool)
+    guest_windows_powershell "$hi_read_platform" \
+        "if (Test-Path -LiteralPath '$hi_read_spool\\artifacts\\$hi_read_run_id\\host-input\\$hi_read_stage.json') { Get-Content -Raw -LiteralPath '$hi_read_spool\\artifacts\\$hi_read_run_id\\host-input\\$hi_read_stage.json'; exit 0 }; exit 3"
 }
 
 wait_for_host_input_stage() {
-    platform=$1
-    run_id=$2
-    stage=$3
-    timeout=$4
-    poll=$(poll_seconds)
-    elapsed=0
-    while [ "$elapsed" -lt "$timeout" ]; do
-        if result=$(read_result "$platform" "$run_id" 2>/dev/null); then
-            status=$(printf '%s' "$result" | jq -er '.status')
-            if [ "$status" = fail ]; then
-                printf '%s\n' "$result" >"$temporary_root/early-guest-result.json"
+    hi_wait_platform=$1
+    hi_wait_run_id=$2
+    hi_wait_stage=$3
+    hi_wait_timeout=$4
+    hi_wait_poll=$(poll_seconds)
+    hi_wait_elapsed=0
+    while [ "$hi_wait_elapsed" -lt "$hi_wait_timeout" ]; do
+        if hi_wait_result=$(read_result "$hi_wait_platform" "$hi_wait_run_id" 2>/dev/null); then
+            hi_wait_status=$(printf '%s' "$hi_wait_result" | jq -er '.status')
+            if [ "$hi_wait_status" = fail ]; then
+                printf '%s\n' "$hi_wait_result" >"$temporary_root/early-guest-result.json"
                 return 20
-            elif [ "$status" = pass ]; then
-                vm_evidence_die "Windows relay completed before host-input stage: $stage"
+            elif [ "$hi_wait_status" = pass ]; then
+                vm_evidence_die "Windows relay completed before host-input stage: $hi_wait_stage"
             fi
         else
-            result_status=$?
-            [ "$result_status" -eq 3 ] ||
+            hi_wait_result_status=$?
+            [ "$hi_wait_result_status" -eq 3 ] ||
                 vm_evidence_die "Windows control plane failed reading relay result"
         fi
         if [ -f "$temporary_root/relay-activation.status" ] &&
@@ -462,59 +462,66 @@ wait_for_host_input_stage() {
             cat "$temporary_root/relay-activation.log" >&2
             vm_evidence_die "Windows graphical-session relay activation failed"
         fi
-        if state=$(read_host_input_stage "$platform" "$run_id" "$stage" 2>/dev/null); then
-            printf '%s' "$state" | jq -e --arg run_id "$run_id" --arg stage "$stage" '
+        if hi_wait_state=$(read_host_input_stage \
+            "$hi_wait_platform" "$hi_wait_run_id" "$hi_wait_stage" 2>/dev/null); then
+            printf '%s' "$hi_wait_state" |
+                jq -e --arg run_id "$hi_wait_run_id" --arg stage "$hi_wait_stage" '
                 (keys | sort) == (["run_id", "schema_version", "stage"] | sort) and
                 .schema_version == 1 and .run_id == $run_id and .stage == $stage
             ' >/dev/null ||
-                vm_evidence_die "invalid host-input state for stage: $stage"
+                vm_evidence_die "invalid host-input state for stage: $hi_wait_stage"
             return 0
         else
-            state_status=$?
-            [ "$state_status" -eq 3 ] ||
+            hi_wait_state_status=$?
+            [ "$hi_wait_state_status" -eq 3 ] ||
                 vm_evidence_die "Windows control plane failed reading host-input state"
         fi
-        sleep "$poll"
-        elapsed=$((elapsed + poll))
+        sleep "$hi_wait_poll"
+        hi_wait_elapsed=$((hi_wait_elapsed + hi_wait_poll))
     done
-    vm_evidence_die "Windows host-input stage timed out: $stage"
+    vm_evidence_die "Windows host-input stage timed out: $hi_wait_stage"
 }
 
 drive_host_input() {
-    platform=$1
-    run_id=$2
-    descriptor=$3
-    initial_timeout=$(jq -er '.initial_timeout_seconds' "$descriptor")
-    stage_timeout=$(jq -er '.stage_timeout_seconds' "$descriptor")
-    stage_index=0
-    stage_count=$(jq -er '.stages | length' "$descriptor")
-    while [ "$stage_index" -lt "$stage_count" ]; do
-        stage=$(jq -c --argjson index "$stage_index" '.stages[$index]' "$descriptor")
-        stage_name=$(printf '%s' "$stage" | jq -er '.wait_for')
-        if [ "$stage_index" -eq 0 ]; then
-            timeout=$initial_timeout
+    hi_drive_platform=$1
+    hi_drive_run_id=$2
+    hi_drive_descriptor=$3
+    hi_drive_initial_timeout=$(jq -er '.initial_timeout_seconds' "$hi_drive_descriptor")
+    hi_drive_stage_timeout=$(jq -er '.stage_timeout_seconds' "$hi_drive_descriptor")
+    hi_drive_stage_index=0
+    hi_drive_stage_count=$(jq -er '.stages | length' "$hi_drive_descriptor")
+    while [ "$hi_drive_stage_index" -lt "$hi_drive_stage_count" ]; do
+        hi_drive_stage_json=$(jq -c --argjson index "$hi_drive_stage_index" \
+            '.stages[$index]' "$hi_drive_descriptor")
+        hi_drive_stage_name=$(printf '%s' "$hi_drive_stage_json" | jq -er '.wait_for')
+        if [ "$hi_drive_stage_index" -eq 0 ]; then
+            hi_drive_timeout=$hi_drive_initial_timeout
         else
-            timeout=$stage_timeout
+            hi_drive_timeout=$hi_drive_stage_timeout
         fi
-        if wait_for_host_input_stage "$platform" "$run_id" "$stage_name" "$timeout"; then
+        if wait_for_host_input_stage \
+            "$hi_drive_platform" "$hi_drive_run_id" \
+            "$hi_drive_stage_name" "$hi_drive_timeout"; then
             :
         else
             return $?
         fi
-        event_index=0
-        event_count=$(printf '%s' "$stage" | jq -er '.events | length')
-        while [ "$event_index" -lt "$event_count" ]; do
-            event=$(printf '%s' "$stage" |
-                jq -c --argjson index "$event_index" '.events[$index]')
-            event_type=$(printf '%s' "$event" | jq -er '.type')
-            code=$(printf '%s' "$event" | jq -er '.code')
+        hi_drive_event_index=0
+        hi_drive_event_count=$(printf '%s' "$hi_drive_stage_json" |
+            jq -er '.events | length')
+        while [ "$hi_drive_event_index" -lt "$hi_drive_event_count" ]; do
+            hi_drive_event=$(printf '%s' "$hi_drive_stage_json" |
+                jq -c --argjson index "$hi_drive_event_index" '.events[$index]')
+            hi_drive_event_type=$(printf '%s' "$hi_drive_event" | jq -er '.type')
+            hi_drive_code=$(printf '%s' "$hi_drive_event" | jq -er '.code')
             if ! provider_send_input_event \
-                "$(vm_name "$platform")" "$event_type" "$code"; then
+                "$(vm_name "$hi_drive_platform")" \
+                "$hi_drive_event_type" "$hi_drive_code"; then
                 return 21
             fi
-            event_index=$((event_index + 1))
+            hi_drive_event_index=$((hi_drive_event_index + 1))
         done
-        stage_index=$((stage_index + 1))
+        hi_drive_stage_index=$((hi_drive_stage_index + 1))
     done
     host_input_completed=1
 }
@@ -723,6 +730,10 @@ Usage:
 EOF
     exit 2
 }
+
+if [ "${VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY:-0}" -eq 1 ]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 [ "$#" -ge 1 ] || usage
 load_config
