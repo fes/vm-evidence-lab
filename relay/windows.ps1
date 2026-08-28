@@ -154,8 +154,19 @@ function Write-RelayResult {
         $partialPath = (Get-Item -LiteralPath "$Path.partial").FullName
         $destinationPath = (Get-Item -LiteralPath $Path).FullName
         $backupPath = "$destinationPath.backup"
-        Remove-Item -LiteralPath $backupPath -Force -ErrorAction Ignore
-        [System.IO.File]::Replace($partialPath, $destinationPath, $backupPath)
+        $replaceDeadline = (Get-Date).AddSeconds(5)
+        while ($true) {
+            try {
+                Remove-Item -LiteralPath $backupPath -Force -ErrorAction Ignore
+                [System.IO.File]::Replace($partialPath, $destinationPath, $backupPath)
+                break
+            } catch [System.IO.IOException] {
+                if ((Get-Date) -ge $replaceDeadline) {
+                    throw
+                }
+                Start-Sleep -Milliseconds 50
+            }
+        }
         Remove-Item -LiteralPath $backupPath -Force
     } else {
         Move-Item -LiteralPath "$Path.partial" -Destination $Path
