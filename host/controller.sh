@@ -533,6 +533,8 @@ drive_host_input() {
             jq -er '.settle_seconds')
         hi_drive_inter_event_seconds=$(printf '%s' "$hi_drive_stage_json" |
             jq -er '.inter_event_milliseconds / 1000')
+        hi_drive_first_event_pause_seconds=$(printf '%s' "$hi_drive_stage_json" |
+            jq -er '.first_event_pause_milliseconds / 1000')
         if [ "$hi_drive_settle_seconds" -gt 0 ]; then
             sleep "$hi_drive_settle_seconds"
         fi
@@ -550,9 +552,13 @@ drive_host_input() {
                 return 21
             fi
             hi_drive_event_index=$((hi_drive_event_index + 1))
-            if [ "$hi_drive_event_index" -lt "$hi_drive_event_count" ] &&
-                [ "$hi_drive_inter_event_seconds" != 0 ]; then
-                sleep "$hi_drive_inter_event_seconds"
+            if [ "$hi_drive_event_index" -lt "$hi_drive_event_count" ]; then
+                if [ "$hi_drive_event_index" -eq 1 ] &&
+                    [ "$hi_drive_first_event_pause_seconds" != 0 ]; then
+                    sleep "$hi_drive_first_event_pause_seconds"
+                elif [ "$hi_drive_inter_event_seconds" != 0 ]; then
+                    sleep "$hi_drive_inter_event_seconds"
+                fi
             fi
         done
         hi_drive_stage_index=$((hi_drive_stage_index + 1))

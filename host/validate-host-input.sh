@@ -19,12 +19,15 @@ jq -e '
     ([.stages[].wait_for] | length == (unique | length)) and
     all(.stages[];
       (keys | sort) == ([
-        "events", "inter_event_milliseconds", "settle_seconds", "wait_for"
+        "events", "first_event_pause_milliseconds",
+        "inter_event_milliseconds", "settle_seconds", "wait_for"
       ] | sort) and
       (.wait_for | type == "string" and test("^[a-z][a-z0-9-]{0,63}$")) and
       (.settle_seconds | type == "number" and floor == . and . >= 0 and . <= 5) and
       (.inter_event_milliseconds |
         type == "number" and floor == . and . >= 0 and . <= 1000) and
+      (.first_event_pause_milliseconds |
+        type == "number" and floor == . and . >= 0 and . <= 2000) and
       (.events | type == "array" and length >= 1 and length <= 64) and
       all(.events[];
         (keys | sort) == (["code", "type"] | sort) and
