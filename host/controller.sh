@@ -81,6 +81,21 @@ guest_scp() {
     fi
 }
 
+guest_scp_from() {
+    platform=$1
+    remote_path=$2
+    local_path=$3
+    key=$(jq -er '.ssh_private_key // empty' "$config_path")
+    port=$(vm_field "$platform" port)
+    if [ -n "$key" ]; then
+        scp -i "$key" -P "$port" -o BatchMode=yes -o ConnectTimeout=10 \
+            "$(guest_target "$platform"):$remote_path" "$local_path"
+    else
+        scp -P "$port" -o BatchMode=yes -o ConnectTimeout=10 \
+            "$(guest_target "$platform"):$remote_path" "$local_path"
+    fi
+}
+
 guest_windows_powershell() {
     guest_ssh "$1" "powershell.exe -NoProfile -NonInteractive -Command \"$2\""
 }
@@ -625,6 +640,14 @@ cleanup_run() {
         wait "$relay_activation_pid" >/dev/null 2>&1
     fi
     if [ "${run_started:-0}" -eq 1 ]; then
+        spool=$(vm_field "$run_platform" relay_spool)
+        if [ "$run_platform" = windows ]; then
+            guest_scp_from "$run_platform" "$spool\\logs\\$run_id.log" \
+                "$run_root/guest.log" >/dev/null 2>&1
+        else
+            guest_scp_from "$run_platform" "$spool/logs/$run_id.log" \
+                "$run_root/guest.log" >/dev/null 2>&1
+        fi
         capture_vm "$run_platform" "$run_root/desktop-final.png"
         provider_metadata "$(vm_name "$run_platform")" >"$run_root/provider-metadata.json"
         provider_stop "$(vm_name "$run_platform")"
