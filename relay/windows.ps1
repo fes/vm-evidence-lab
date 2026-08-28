@@ -150,7 +150,11 @@ function Write-RelayResult {
         updated_at = (Get-Date).ToUniversalTime().ToString('o')
     } | ConvertTo-Json -Depth 8 -Compress |
         Set-Content -LiteralPath "$Path.partial" -NoNewline
-    Move-Item -LiteralPath "$Path.partial" -Destination $Path -Force
+    if (Test-Path -LiteralPath $Path) {
+        [System.IO.File]::Replace("$Path.partial", $Path, $null)
+    } else {
+        [System.IO.File]::Move("$Path.partial", $Path)
+    }
 }
 
 function Stage-Sources {
