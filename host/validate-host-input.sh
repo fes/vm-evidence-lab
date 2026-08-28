@@ -18,9 +18,13 @@ jq -e '
     (.stages | type == "array" and length >= 1 and length <= 8) and
     ([.stages[].wait_for] | length == (unique | length)) and
     all(.stages[];
-      (keys | sort) == (["events", "settle_seconds", "wait_for"] | sort) and
+      (keys | sort) == ([
+        "events", "inter_event_milliseconds", "settle_seconds", "wait_for"
+      ] | sort) and
       (.wait_for | type == "string" and test("^[a-z][a-z0-9-]{0,63}$")) and
       (.settle_seconds | type == "number" and floor == . and . >= 0 and . <= 5) and
+      (.inter_event_milliseconds |
+        type == "number" and floor == . and . >= 0 and . <= 1000) and
       (.events | type == "array" and length >= 1 and length <= 64) and
       all(.events[];
         (keys | sort) == (["code", "type"] | sort) and

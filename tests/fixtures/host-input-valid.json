@@ -8,6 +8,7 @@
     {
       "wait_for": "ready",
       "settle_seconds": 0,
+      "inter_event_milliseconds": 0,
       "events": [
         {"type": "pointer-button", "code": 178},
         {"type": "key", "code": 23}
@@ -16,6 +17,7 @@
     {
       "wait_for": "confirmed",
       "settle_seconds": 0,
+      "inter_event_milliseconds": 0,
       "events": [
         {"type": "key", "code": 98}
       ]
