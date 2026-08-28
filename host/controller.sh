@@ -642,8 +642,10 @@ cleanup_run() {
     if [ "${run_started:-0}" -eq 1 ]; then
         spool=$(vm_field "$run_platform" relay_spool)
         if [ "$run_platform" = windows ]; then
-            guest_scp_from "$run_platform" "$spool\\logs\\$run_id.log" \
-                "$run_root/guest.log" >/dev/null 2>&1
+            guest_windows_powershell "$run_platform" \
+                "Get-Content -Raw -LiteralPath '$spool\\logs\\$run_id.log'" \
+                >"$run_root/guest.log" 2>/dev/null
+            [ -s "$run_root/guest.log" ] || rm -f "$run_root/guest.log"
         else
             guest_scp_from "$run_platform" "$spool/logs/$run_id.log" \
                 "$run_root/guest.log" >/dev/null 2>&1
