@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "profile_id": "m2pro",
+  "host": {
+    "architecture": "arm64",
+    "model_identifier": "REPLACE_WITH_sysctl_hw.model",
+    "macos_version": "REPLACE_WITH_sw_vers_productVersion",
+    "macos_build": "REPLACE_WITH_sw_vers_productVersion_build",
+    "parallels_version": "REPLACE_WITH_prlctl_version_output",
+    "storage_root": "/Volumes/REPLACE_WITH_DATA_VOLUME/VM-Evidence/m2pro",
+    "minimum_free_bytes": 322122547200
+  },
+  "guests": {
+    "windows": {
+      "name": "m2pro-evidence-windows",
+      "architecture": "arm64",
+      "os_version": "REPLACE_WITH_EXACT_WINDOWS_RELEASE_AND_BUILD",
+      "installer_path": "/Volumes/REPLACE_WITH_DATA_VOLUME/installers/Windows11-arm64.iso",
+      "installer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "baseline_id": "m2pro-windows-v1",
+      "cpu_count": 4,
+      "memory_mib": 8192,
+      "disk_gib": 100
+    },
+    "linux": {
+      "name": "m2pro-evidence-linux",
+      "architecture": "arm64",
+      "os_version": "REPLACE_WITH_EXACT_LINUX_RELEASE_AND_BUILD",
+      "installer_path": "/Volumes/REPLACE_WITH_DATA_VOLUME/installers/linux-arm64.iso",
+      "installer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "baseline_id": "m2pro-linux-v1",
+      "cpu_count": 4,
+      "memory_mib": 6144,
+      "disk_gib": 80
+    },
+    "macos": {
+      "name": "m2pro-evidence-macos",
+      "architecture": "arm64",
+      "os_version": "REPLACE_WITH_MACOS_VERSION_MATCHING_HOST_MAJOR",
+      "installer_path": "/Volumes/REPLACE_WITH_DATA_VOLUME/installers/macos-arm64.ipsw",
+      "installer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "baseline_id": "m2pro-macos-v1",
+      "cpu_count": 4,
+      "memory_mib": 8192,
+      "disk_gib": 100
+    }
+  }
+}

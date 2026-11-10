@@ -25,6 +25,8 @@ and acceptance decisions.
 - one host-wide lock suitable for an exclusive physical device;
 - Unix and Windows relays with pinned adapters;
 - versioned JSON schemas and fake-adapter contract tests.
+- pinned Parallels host profiles with installer-hash preflight, macOS ARM VM
+  creation, and stopped-VM resource/isolation configuration.
 
 This is an extraction baseline, not evidence that a product has migrated.
 Keep existing fesTerm automation operational until parity has been established.
@@ -60,6 +62,9 @@ On Windows:
 Start with [`docs/MAC_HANDOFF.md`](docs/MAC_HANDOFF.md). It describes how to
 pin this repository separately, create fesTerm and ReInk adapters, configure
 Parallels guests, and migrate without breaking the existing lab.
+
+For new, host-specific Parallels baselines, see
+[`docs/PROVISIONING.md`](docs/PROVISIONING.md) and the example M2 Pro profile.
 
 QEMU/KVM is a planned alternate provider for Linux and Windows hosts and
 guests. See [`docs/QEMU_KVM_PORT.md`](docs/QEMU_KVM_PORT.md).
