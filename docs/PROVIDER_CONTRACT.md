@@ -24,6 +24,29 @@ that evidence ran in the logged-in desktop. Providers without an equivalent
 must arrange an installed graphical-session trigger and implement this
 function as a narrow activation operation, not arbitrary candidate execution.
 
+For Parallels Windows guests, `prlctl exec --current-user` requires an already
+logged-in console desktop. SSH reachability alone is insufficient; a logon or
+password-expiration screen is an infrastructure prerequisite failure, not a
+product test failure. The controller does not repair credentials or enable
+automatic logon.
+
+The current-user operation runs asynchronously on the host. A completed nonzero
+provider exit fails result polling promptly as infrastructure, even for modes
+without host input; the original exit status is retained. A zero exit alone
+does not replace the guest's terminal result: result polling continues within
+the existing deadlines. Terminal-result arrival is also followed by the
+activation status check.
+
+Cleanup retains `relay-activation.log` and the completed
+`relay-activation.status`, when present, in the private run artifact directory
+before deleting the controller-owned staging directory, on success, failure,
+timeout, or cancellation. A detected activation failure also retains
+`relay-activation-failure.json` with its infrastructure classification and
+provider exit status. Each retained activation file is limited to its first
+64 KiB and created owner-only; treat it as private, unsanitized provider output.
+Cancellation of an unfinished activation may leave a log but no completed
+status. These files do not certify a graphical logon or successful product run.
+
 `provider_send_input_event` is required only when a pinned adapter includes a
 `host-input.json` plan for the selected mode. Providers must reject unsupported
 event types. The controller validates codes against a deliberately narrow
