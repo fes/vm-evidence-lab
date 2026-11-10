@@ -433,7 +433,9 @@ publish_job() {
                     -AdapterRoot "$(vm_field "$platform" adapter_root)" \
                     -Platform windows \
                     >"$temporary_root/relay-activation.log" 2>&1
-                printf '%s\n' "$?" >"$temporary_root/relay-activation.status"
+                printf '%s\n' "$?" >"$temporary_root/relay-activation.status.partial"
+                mv "$temporary_root/relay-activation.status.partial" \
+                    "$temporary_root/relay-activation.status"
             ) &
             relay_activation_pid=$!
             ;;
@@ -478,11 +480,7 @@ wait_for_host_input_stage() {
                 vm_evidence_die "Windows control plane failed reading relay result"
         fi
         if [ -f "$temporary_root/relay-activation.status" ]; then
-            hi_wait_relay_status=$(cat "$temporary_root/relay-activation.status")
-            if [ "$hi_wait_relay_status" -ne 0 ]; then
-                cat "$temporary_root/relay-activation.log" >&2
-                vm_evidence_die "Windows graphical-session relay activation failed"
-            fi
+            check_relay_activation
             vm_evidence_die \
                 "Windows graphical-session relay exited before host-input stage: $hi_wait_stage"
         fi
@@ -566,14 +564,37 @@ drive_host_input() {
     host_input_completed=1
 }
 
+check_relay_activation() {
+    [ -f "$temporary_root/relay-activation.status" ] || return 0
+    relay_status=$(cat "$temporary_root/relay-activation.status")
+    [ "$relay_status" -ne 0 ] || return 0
+    (
+        umask 077
+        jq -n --argjson status "$relay_status" \
+            '{failure_class: "infrastructure", relay_activation_status: $status,
+              message: "Windows graphical-session relay activation failed"}' \
+            >"$temporary_root/relay-activation-failure.json"
+    )
+    head -c 65536 "$temporary_root/relay-activation.log" >&2
+    vm_evidence_die \
+        "infrastructure: Windows graphical-session relay activation failed (provider exit status $relay_status)"
+}
+
+retain_relay_activation_diagnostics() (
+    umask 077
+    for activation_file in relay-activation.log relay-activation.status \
+        relay-activation-failure.json; do
+        if [ -f "$temporary_root/$activation_file" ]; then
+            head -c 65536 "$temporary_root/$activation_file" \
+                >"$run_root/$activation_file"
+        fi
+    done
+)
+
 finish_relay_activation() {
     if [ -n "${relay_activation_pid:-}" ]; then
         wait "$relay_activation_pid"
-        relay_status=$(cat "$temporary_root/relay-activation.status")
-        if [ "$relay_status" -ne 0 ]; then
-            cat "$temporary_root/relay-activation.log" >&2
-            vm_evidence_die "Windows graphical-session relay activation failed"
-        fi
+        check_relay_activation
         relay_activation_pid=
     fi
 }
@@ -632,6 +653,7 @@ wait_for_result() {
             [ "$result_status" -eq 3 ] ||
                 vm_evidence_die "$platform control plane failed reading result"
         fi
+        check_relay_activation
         sleep "$poll"
     done
     vm_evidence_die "$platform relay did not finish within ${overall} seconds"
@@ -651,6 +673,7 @@ cleanup_run() {
         kill "$relay_activation_pid" >/dev/null 2>&1
         wait "$relay_activation_pid" >/dev/null 2>&1
     fi
+    retain_relay_activation_diagnostics
     if [ "${run_started:-0}" -eq 1 ]; then
         spool=$(vm_field "$run_platform" relay_spool)
         if [ "$run_platform" = windows ]; then

@@ -289,6 +289,198 @@ if ! grep -q 'relay exited before host-input stage: ready' "$work/early-exit-err
     exit 1
 fi
 
+# Exercise real publication, polling, finalization and trap cleanup in a fresh
+# shell, so testing an expected failure does not disable the controller's -e.
+cat >"$work/activation-controller.sh" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+root=$1
+work=$2
+scenario=$3
+test_platform=$4
+case_root="$work/activation-$scenario"
+VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY=1
+VM_EVIDENCE_CONTROLLER_ROOT="$root/host"
+export VM_EVIDENCE_CONTROLLER_LIBRARY_ONLY VM_EVIDENCE_CONTROLLER_ROOT
+# shellcheck disable=SC1090
+. "$root/host/controller.sh"
+config_path="$case_root/config.json"
+PATH="$work/deadline-bin:$PATH"
+VM_EVIDENCE_FAKE_DATE_STATE="$case_root/clock"
+TMPDIR=$case_root
+export PATH VM_EVIDENCE_FAKE_DATE_STATE TMPDIR
+uuidgen() { printf 'fake-%s\n' "$scenario"; }
+mktemp() {
+    mkdir "$case_root/staging"
+    printf '%s/staging\n' "$case_root"
+}
+reset_vm() { :; }
+provider_wait_for_restore() { :; }
+provider_start() { :; }
+provider_stop() { :; }
+provider_metadata() { printf '{"provider":"fake"}\n'; }
+capture_vm() { :; }
+wait_for_ssh() { :; }
+sync_relay() { :; }
+sync_adapter() { :; }
+guest_scp() { :; }
+guest_scp_from() { :; }
+guest_ssh() { :; }
+guest_windows_powershell() { :; }
+provider_exec_current_user() {
+    printf 'fake current-user activation: %s\n' "$scenario"
+    case "$scenario" in
+        failure)
+            printf 'no logged-in console user; original provider detail\n'
+            printf '%070000d\n' 0
+            return 1
+            ;;
+        result-race) return 37 ;;
+        cancel)
+            # No subprocesses: cleanup owns precisely this background shell.
+            while :; do :; done
+            ;;
+        *) return 0 ;;
+    esac
+}
+poll_seconds() { printf '2\n'; }
+sleep() { :; }
+read_result() {
+    reads=$(cat "$case_root/polls")
+    reads=$((reads + 1))
+    printf '%s\n' "$reads" >"$case_root/polls"
+    if [ "$test_platform" = windows ]; then
+        # Observe completion, or entry into the pending cancellation fixture.
+        activation_ready="$temporary_root/relay-activation.status"
+        [ "$scenario" != cancel ] ||
+            activation_ready="$temporary_root/relay-activation.log"
+        attempts=0
+        while [ ! -s "$activation_ready" ]; do
+            attempts=$((attempts + 1))
+            [ "$attempts" -le 200 ] || return 4
+            /bin/sleep 0.01
+        done
+    fi
+    case "$scenario" in
+        failure|timeout) return 3 ;;
+        cancel)
+            printf '%s\n' "$relay_activation_pid" >"$case_root/activation-pid"
+            kill -TERM "$$"
+            ;;
+        result-race) ;;
+        *)
+            [ "$reads" -ne 1 ] || return 3
+            if [ "$reads" -eq 2 ]; then
+                printf '{"status":"running","phase":"adapter"}\n'
+                return 0
+            fi
+            ;;
+    esac
+    printf '{"status":"pass","phase":"complete","resolved_sources":[]}\n'
+}
+run_platform "$test_platform" "$case_root/request.json"
+EOF
+
+for scenario in failure result-race delayed timeout unix cancel; do
+    case_root="$work/activation-$scenario"
+    mkdir -p "$case_root"
+    printf '0\n' >"$case_root/clock"
+    printf '0\n' >"$case_root/polls"
+    test_platform=windows
+    [ "$scenario" != unix ] || test_platform=linux
+    overall=2400
+    [ "$scenario" != timeout ] || overall=12
+    jq -n --arg artifacts "$case_root/artifacts" --arg repository "$root" \
+        --arg adapter_sha "$(git -C "$root" rev-parse HEAD)" \
+        --arg source "$work/source" --argjson overall "$overall" '
+        {
+          artifact_root: $artifacts,
+          adapters: {fake: {
+            schema_version: 1, adapter_sha: $adapter_sha,
+            adapter_repository: $repository,
+            adapter_path: "tests/fixtures/fake-adapter",
+            safe_modes: ["pass"], sources: {product: {repository: $source}}
+          }},
+          watchdog: {overall_seconds: $overall},
+          vms: ({name: "fake-vm", relay_spool: "fake-spool",
+                 relay_script: "fake-relay", relay_repository_root: "fake-sources",
+                 adapter_root: "fake-adapters"} | {windows: ., linux: ., macos: .})
+        }' >"$case_root/config.json"
+    jq --arg sha "$sha" '
+        {schema_version, adapter_id, adapter_schema_version, mode,
+         sources: [{id: "product", sha: $sha}], payload}
+    ' "$work/spool/jobs/processed-pass.json" >"$case_root/request.json"
+    controller_status=0
+    sh "$work/activation-controller.sh" "$root" "$work" "$scenario" "$test_platform" \
+        >"$case_root/stdout.log" 2>"$case_root/stderr.log" || controller_status=$?
+    test ! -e "$case_root/artifacts/.locks/lab"
+    test ! -e "$case_root/staging"
+    run_root=$(find "$case_root/artifacts" -name '*-fake-*' -type d)
+    test -d "$run_root"
+    polls=$(cat "$case_root/polls")
+    case "$scenario" in
+        failure|result-race)
+            test "$controller_status" -eq 2
+            test "$polls" -le 3
+            expected_status=1
+            [ "$scenario" != result-race ] || expected_status=37
+            test "$(cat "$run_root/relay-activation.status")" -eq "$expected_status"
+            jq -e --argjson status "$expected_status" '
+                .failure_class == "infrastructure" and
+                .relay_activation_status == $status
+            ' "$run_root/relay-activation-failure.json" >/dev/null
+            grep -q "provider exit status $expected_status" "$case_root/stderr.log"
+            test -s "$run_root/controller-failure.txt"
+            test ! -e "$run_root/manifest.json"
+            if [ "$scenario" = failure ]; then
+                test "$(wc -c <"$run_root/relay-activation.log" | tr -d ' ')" -eq 65536
+                grep -q 'original provider detail' "$run_root/relay-activation.log"
+            fi
+            ;;
+        delayed|unix)
+            test "$controller_status" -eq 0
+            test "$polls" -eq 3
+            jq -e '.guest_result.status == "pass" and .host_input.engaged == false' \
+                "$run_root/manifest.json" >/dev/null
+            test ! -e "$run_root/relay-activation-failure.json"
+            if [ "$scenario" = delayed ]; then
+                test "$(cat "$run_root/relay-activation.status")" -eq 0
+            else
+                test ! -e "$run_root/relay-activation.log"
+            fi
+            ;;
+        timeout)
+            test "$controller_status" -eq 2
+            test "$polls" -le 6
+            grep -q 'did not finish within 12 seconds' "$case_root/stderr.log"
+            test "$(cat "$run_root/relay-activation.status")" -eq 0
+            test ! -e "$run_root/relay-activation-failure.json"
+            ;;
+        cancel)
+            test ! -e "$run_root/manifest.json"
+            test ! -e "$run_root/relay-activation.status"
+            if kill -0 "$(cat "$case_root/activation-pid")" 2>/dev/null; then
+                echo 'cancelled controller left its owned activation running' >&2
+                exit 1
+            fi
+            ;;
+    esac
+    if [ "$test_platform" = windows ]; then
+        test -s "$run_root/relay-activation.log"
+        "$python_command" - "$run_root" <<'EOF'
+import pathlib
+import stat
+import sys
+
+for path in pathlib.Path(sys.argv[1]).glob("relay-activation*"):
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600, path
+    assert path.stat().st_size <= 65536, path
+EOF
+    fi
+    printf 'Activation regression passed: %s (%s polls; lock released; staging removed).\n' \
+        "$scenario" "$polls"
+done
+
 if command -v shellcheck >/dev/null 2>&1; then
     if ! shellcheck "$root/host/controller.sh" "$root/host/lib.sh" \
         "$root/host/validate-host-input.sh" \
