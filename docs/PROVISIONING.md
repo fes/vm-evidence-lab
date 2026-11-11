@@ -93,3 +93,121 @@ passes the required native-window and graphics checks.
 When any pinned input or material guest configuration changes, create a new
 profile/baseline version and repeat qualification. Do not update the accepted
 snapshot in place or silently retry failed qualification runs.
+
+## Unattended guest builds (verified on an M2 Pro, Parallels)
+
+Interactive installs are not reproducible. These steps were verified end to
+end; follow them in order. Secrets stay in a private directory (`0700`) outside
+any checkout.
+
+### Seeds
+
+```sh
+umask 077
+openssl rand -base64 18 > /private/secrets/evidence-password
+ssh-keygen -t ed25519 -N '' -C vm-evidence-lab -f ~/.ssh/vm-evidence-lab
+python3 provision/make_seeds.py --out /private/seeds \
+  --public-key ~/.ssh/vm-evidence-lab.pub \
+  --password-file /private/secrets/evidence-password
+```
+
+This renders `provision/seeds/*.template` into `seed-linux.iso` (label
+`CIDATA`, Ubuntu autoinstall) and `seed-windows.iso` (label `WINSEED`:
+`Autounattend.xml`, `setup-evidence.ps1`, Parallels Tools `IGT_ARM64.exe` and
+`prl_tg/`, copied from the installed Parallels Desktop app because a seed
+without them cannot install Tools). Attach each seed as a second CD-ROM.
+
+### CD-ROM and input quirks
+
+- `prlctl set --device-add cdrom` creates the device disconnected; follow with
+  `prlctl set VM --device-set cdromN --connect`. A guest reset or restart can
+  disconnect it again, so re-check before relying on a seed.
+- Delete CD-ROMs one `--device-del` per call; passing several fails.
+- Set boot order with `--device-bootorder`; detach installers and seeds after
+  install.
+- `prlctl` can send keys (`send-key-event -s <scancode> -d <ms>`) but not mouse
+  input. `prlctl capture` may return before the file exists; retry.
+- `prlctl exec` on Windows runs as SYSTEM.
+
+### Linux: Ubuntu Desktop 24.04.5 ARM64
+
+- Use 24.04.5, not 26.04: 26.04 has no GNOME Xorg session, which the product
+  requires. The seed disables Wayland and enables autologin for `evidence`.
+- Give the guest 8192 MiB RAM and add an 8 GB swapfile (plus fstab entry).
+  6 GiB with a 4 GB swap was OOM-killed by `ld` during `cargo bench` builds.
+- Install: `build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev
+  libwayland-dev libx11-dev libxcb1-dev libvulkan-dev mesa-vulkan-drivers xvfb
+  vttest less vim-nox neovim tmux htop gh git jq xdotool wmctrl imagemagick
+  x11-utils scrot python3 curl openssh-server dkms linux-headers-generic
+  libudev-dev libfontconfig1-dev libfreetype-dev libxcursor-dev libxi-dev
+  libxrandr-dev libasound2-dev libssl-dev libxcb-xfixes0-dev
+  libxcb-shape0-dev libxcb-render0-dev`, then rustup (stable).
+- Parallels Tools: hot-add the Tools ISO as a CD-ROM, reboot so `/dev/sr0`
+  appears, mount it and run `install --install-unattended-with-deps`.
+- Install the relay (`relay/install-linux.sh`); disable GNOME screen lock,
+  sleep, idle dimming, and automatic updates.
+
+### Windows 11 ARM64
+
+- Always install onto a fresh, empty disk. A partially installed disk makes
+  Setup ask "upgrade or clean install", which the unattended file cannot
+  answer. Press Space repeatedly at boot to pass "Press any key".
+- The OOBE EULA page may still need one mouse click (not scriptable with
+  `prlctl`); expect one manual click.
+- After first boot, ensure the seed CD is connected and run
+  `setup-evidence.ps1` (via `prlctl exec`) if it did not run automatically. It
+  installs OpenSSH, installs the controller key, sets the firewall rule to
+  `-Profile Any` (Parallels Shared networking reports Public), and marks the
+  network Private. Remove stale `known_hosts` entries when rebuilding.
+- With `winget install --disable-interactivity`: `Git.Git`, `jqlang.jq`,
+  `Rustlang.Rustup`, and Visual Studio 2022 Build Tools with the ARM64, x64,
+  Clang (LLVM) and Windows 11 SDK 26100 components. Set the Rust default to
+  `stable-aarch64-pc-windows-msvc`, then run `relay/install-windows.ps1`.
+- The fesTerm adapter uses `clang-cl` when present, else `clang`. Plain
+  `clang` as `CC` breaks cc-rs on MSVC targets.
+- Verify autologon survives `prlctl restart`.
+
+### macOS (same major version as the host)
+
+- Run Setup Assistant by hand: user `evidence`, the generated password,
+  enable Remote Login (System Settings > General > Sharing).
+- Install the controller key with `ssh-copy-id` (use an `SSH_ASKPASS` helper
+  when scripting). Install Command Line Tools headlessly: create
+  `/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress`, then
+  `softwareupdate -i` the listed CLT label.
+- Install rustup (quote `"=https"` in zsh), then `relay/install-macos.sh`.
+- Install Parallels Tools with `installer -pkg ".../Install.mpkg" -target /`
+  from the mounted Tools ISO.
+- Autologin: `sysadminctl -autologin` fails over SSH. Write `/etc/kcpassword`
+  (password XOR key `7d 89 52 23 d2 bc dd ea a3 b9 1f`, NUL-padded to a
+  multiple of 12 bytes, mode 0600) and
+  `defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser
+  evidence`. Verify `stat -f %Su /dev/console` is `evidence` after a reboot.
+- `prlctl` does not report the macOS guest IP; use a DHCP reservation or fixed
+  addresses in the controller config.
+- Native UI jobs may need Accessibility and Screen Recording approval in the
+  guest GUI; record those decisions in the run record.
+
+### Baseline, snapshot, and controller
+
+1. Power off, detach installer/seed CDs, set boot order to the hard disk, run
+   `lab.py harden`.
+2. Snapshot each VM, named by its baseline ID (for example
+   `m2pro-linux-v3`), with the VM stopped. On a baseline change create a new
+   snapshot, delete the old one after the new one qualifies, and update the
+   snapshot ID in the private controller config.
+3. Create the private controller config (`0600`) from
+   `host/config.example.json`. `adapter_sha` pins the product adapter; any
+   adapter change needs a commit and a new pin in the config and in each
+   request's `sources`.
+4. Run a request: `VM_EVIDENCE_CONFIG=/private/config.json host/controller.sh
+   run <platform> <request.json>`. Requests need `schema_version`,
+   `adapter_id`, `adapter_schema_version`, `mode`, `sources`, and `payload`.
+5. Run `native-smoke` on each platform first as a readiness check.
+
+### Known gaps
+
+- If the adapter is killed (for example by the OOM killer) the guest result
+  stays `running` and the controller only ends at its overall timeout. Check
+  guest kernel logs (`journalctl -k -b -1`) before assuming a product fault.
+- Running all three VMs concurrently needs about 24 GB of host RAM.

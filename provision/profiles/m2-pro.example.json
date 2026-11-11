@@ -30,7 +30,7 @@
       "installer_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "baseline_id": "m2pro-linux-v1",
       "cpu_count": 4,
-      "memory_mib": 6144,
+      "memory_mib": 8192,
       "disk_gib": 80
     },
     "macos": {

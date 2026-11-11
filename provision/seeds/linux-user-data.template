@@ -1,0 +1,31 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  identity:
+    hostname: evidence-linux
+    username: evidence
+    realname: Evidence
+    password: "@EVIDENCE_PASSWORD_HASH@"
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+      - "@SSH_PUBLIC_KEY@ vm-evidence-lab"
+  storage:
+    layout:
+      name: direct
+  updates: security
+  shutdown: poweroff
+  late-commands:
+    - |
+      mkdir -p /target/etc/gdm3
+      cat >/target/etc/gdm3/custom.conf <<'EOF'
+      [daemon]
+      AutomaticLoginEnable=true
+      AutomaticLogin=evidence
+      WaylandEnable=false
+      EOF
+    - curtin in-target --target=/target -- loginctl enable-linger evidence || true
