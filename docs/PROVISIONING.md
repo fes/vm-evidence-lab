@@ -155,10 +155,14 @@ without them cannot install Tools). Attach each seed as a second CD-ROM.
   installs OpenSSH, installs the controller key, sets the firewall rule to
   `-Profile Any` (Parallels Shared networking reports Public), and marks the
   network Private. Remove stale `known_hosts` entries when rebuilding.
-- With `winget install --disable-interactivity`: `Git.Git`, `jqlang.jq`,
-  `Rustlang.Rustup`, and Visual Studio 2022 Build Tools with the ARM64, x64,
-  Clang (LLVM) and Windows 11 SDK 26100 components. Set the Rust default to
-  `stable-aarch64-pc-windows-msvc`, then run `relay/install-windows.ps1`.
+- Copy `relay/` and `provision/guest-setup-windows.ps1` to the guest and run it
+  elevated from a logged-in session (winget is unreliable from SYSTEM):
+  `powershell -ExecutionPolicy Bypass -File guest-setup-windows.ps1 -RelayDir <relay>`.
+  It winget-installs `Git.Git`, `jqlang.jq`, `Rustlang.Rustup` and VS 2022
+  Build Tools (ARM64, x64, Clang/LLVM, Windows 11 SDK 26100), sets the Rust
+  default to `stable-aarch64-pc-windows-msvc`, installs the relay, and
+  verifies the result. Only the already-installed (idempotent) path has been
+  exercised; a from-scratch run is unproven.
 - The fesTerm adapter uses `clang-cl` when present, else `clang`. Plain
   `clang` as `CC` breaks cc-rs on MSVC targets.
 - Leave OpenSSH's default shell as `cmd.exe`. The controller sends
