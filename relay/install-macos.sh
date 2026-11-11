@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 set -eu
+# Product security checks reject group-writable ancestors; Ubuntu defaults to 002.
+umask 022
 
 [ "$#" -eq 4 ] || {
     echo "Usage: $0 <spool> <repository-root> <adapter-root> <relay-root>" >&2

@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 set -eu
+# Product security checks reject group-writable ancestors; Ubuntu defaults to 002.
+umask 022
 
 relay_root=${VM_EVIDENCE_SPOOL:?VM_EVIDENCE_SPOOL is required}
 relay_repository_root=${VM_EVIDENCE_REPOSITORY_ROOT:?VM_EVIDENCE_REPOSITORY_ROOT is required}
