@@ -165,6 +165,9 @@ without them cannot install Tools). Attach each seed as a second CD-ROM.
   `stable-aarch64-pc-windows-msvc`, then run `relay/install-windows.ps1`.
 - The fesTerm adapter uses `clang-cl` when present, else `clang`. Plain
   `clang` as `CC` breaks cc-rs on MSVC targets.
+- Leave OpenSSH's default shell as `cmd.exe`. The controller sends
+  `powershell.exe -Command "..."`; with PowerShell as the SSH default shell the
+  outer shell expands `$_` and `$vars` and every controller command breaks.
 - Verify autologon survives `prlctl restart`.
 
 ### macOS (same major version as the host)
