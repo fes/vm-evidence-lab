@@ -135,17 +135,13 @@ without them cannot install Tools). Attach each seed as a second CD-ROM.
   requires. The seed disables Wayland and enables autologin for `evidence`.
 - Give the guest 8192 MiB RAM and add an 8 GB swapfile (plus fstab entry).
   6 GiB with a 4 GB swap was OOM-killed by `ld` during `cargo bench` builds.
-- Install: `build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev
-  libwayland-dev libx11-dev libxcb1-dev libvulkan-dev mesa-vulkan-drivers xvfb
-  vttest less vim-nox neovim tmux htop gh git jq xdotool wmctrl imagemagick
-  x11-utils scrot python3 curl openssh-server dkms linux-headers-generic
-  libudev-dev libfontconfig1-dev libfreetype-dev libxcursor-dev libxi-dev
-  libxrandr-dev libasound2-dev libssl-dev libxcb-xfixes0-dev
-  libxcb-shape0-dev libxcb-render0-dev`, then rustup (stable).
-- Parallels Tools: hot-add the Tools ISO as a CD-ROM, reboot so `/dev/sr0`
-  appears, mount it and run `install --install-unattended-with-deps`.
-- Install the relay (`relay/install-linux.sh`); disable GNOME screen lock,
-  sleep, idle dimming, and automatic updates.
+- After the autoinstall powers off, detach the installer and seed, attach
+  `prl-tools-lin-arm.iso` (from the Parallels app `Resources/Tools`), boot, and
+  copy `relay/` and `provision/guest-setup-linux.sh` to the guest. Then run
+  `sudo ./guest-setup-linux.sh <path-to-relay>`. It installs packages (including
+  `screen`), the 8 GB swapfile, rustup, Parallels Tools, GNOME quieting, the
+  relay, and verifies the result. It is idempotent. Verified from scratch on
+  an M2 Pro: a fresh VM built this way had working Rust, swap, Tools and relay.
 
 ### Windows 11 ARM64
 
