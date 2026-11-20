@@ -73,6 +73,15 @@ if op=='open':
  assert session.parent.stat().st_mode&0o777==0o700
  assert all(p.stat().st_mode&0o777==0o600 for p in(session,command,output,error))
  assert value('-a')==os.environ['FIXTURE_APP']
+ if os.environ['FIXTURE_MODE']=='deferred-child':
+  def deferred(*unused):
+   assert not session.exists()
+   (root/'session-revoked-before-deferred-child').write_text('yes')
+   child=subprocess.Popen(['/bin/sleep','30'],start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+   (root/'child.json').write_text(json.dumps({'pid':child.pid,'argv':os.environ['FIXTURE_EXE']+' --session '+str(session)+' --artifact-root '+value('--artifact-root')}))
+   sys.exit(0)
+  signal.signal(signal.SIGTERM,deferred)
+  while True:time.sleep(.02)
  child=subprocess.Popen(['/bin/sleep','30'],start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  (root/'child.json').write_text(json.dumps({'pid':child.pid,'argv':os.environ['FIXTURE_EXE']+' --session '+str(session)+' --artifact-root '+value('--artifact-root')}))
  if os.environ['FIXTURE_MODE']=='success':
@@ -156,6 +165,12 @@ if op=='open':
     def test_deadline_terminates_exact_new_lifetime(self):
         result, root = self.run_wrapper("timeout")
         self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertFalse(list(root.glob("vm-evidence-interaction.*")))
+
+    def test_deferred_child_is_found_after_open_stops(self):
+        result, root = self.run_wrapper("deferred-child")
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertEqual((root / "session-revoked-before-deferred-child").read_text(), "yes")
         self.assertFalse(list(root.glob("vm-evidence-interaction.*")))
 
     def test_changed_open_birth_is_not_killed(self):

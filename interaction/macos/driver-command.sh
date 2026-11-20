@@ -71,25 +71,10 @@ open_identity() {
 cleanup() {
     status=$?
     trap - EXIT HUP INT TERM
-    remember_children
-    for record in "$work"/child.*; do
-        [ -f "$record" ] || continue
-        candidate=${record##*.}
-        birth=$(identity "$candidate") || continue
-        if [ "$birth" = "$(cat "$record")" ]; then
-            kill -TERM "$candidate" 2>/dev/null || :
-        fi
-    done
-    # A LaunchServices child is outside open's process group. Its absence, not
-    # merely open's exit, is the cleanup condition. Never kill a reused PID.
-    polls=30
-    while :; do
-        remaining=$(helper_rows)
-        [ -z "$remaining" ] && break
-        [ "$polls" -gt 0 ] || break
-        polls=$((polls - 1))
-        sleep 0.1
-    done
+    # Revoke the launch argument before stopping open: an LS launch already
+    # queued by open must never acquire a still-valid session after our scan.
+    revoke_unresolved=false
+    mv "$work/session.json" "$work/revoked-session.json" || revoke_unresolved=true
     open_unresolved=false
     if [ -n "$open_pid" ] && kill -0 "$open_pid" 2>/dev/null; then
         current_open_birth=$(open_identity) || current_open_birth=
@@ -117,7 +102,26 @@ cleanup() {
     if [ -n "$open_pid" ] && [ "$open_unresolved" = false ]; then
         wait "$open_pid" 2>/dev/null || :
     fi
-    if [ -n "${remaining:-}" ] || [ "$open_unresolved" = true ]; then
+    remember_children
+    for record in "$work"/child.*; do
+        [ -f "$record" ] || continue
+        candidate=${record##*.}
+        birth=$(identity "$candidate") || continue
+        if [ "$birth" = "$(cat "$record")" ]; then
+            kill -TERM "$candidate" 2>/dev/null || :
+        fi
+    done
+    # A LaunchServices child is outside open's process group. Its absence, not
+    # merely open's exit, is the cleanup condition. Never kill a reused PID.
+    polls=30
+    while :; do
+        remaining=$(helper_rows)
+        [ -z "$remaining" ] && break
+        [ "$polls" -gt 0 ] || break
+        polls=$((polls - 1))
+        sleep 0.1
+    done
+    if [ -n "${remaining:-}" ] || [ "$open_unresolved" = true ] || [ "$revoke_unresolved" = true ]; then
         echo "macOS interaction helper cleanup could not verify absence; private evidence retained" >&2
         exit 125
     fi
