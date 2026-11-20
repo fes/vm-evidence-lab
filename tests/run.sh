@@ -23,6 +23,7 @@ done
 "$python_command" "$root/tests/test_contract.py"
 "$python_command" "$root/tests/test_interaction.py"
 "$python_command" "$root/tests/test_provision.py"
+"$python_command" "$root/tests/test_macos_interaction_wrapper.py"
 
 cp "$root/tests/fixtures/fake-adapter/policy.json" "$work/adapters/fake/policy.json"
 cp "$root/tests/fixtures/fake-adapter/linux.sh" "$work/adapters/fake/linux.sh"
