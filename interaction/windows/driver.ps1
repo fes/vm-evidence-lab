@@ -180,6 +180,24 @@ public static class EvidenceNative {
         IntPtr hit = WindowFromPoint(new POINT { X = x, Y = y });
         return hit == IntPtr.Zero ? IntPtr.Zero : GetAncestor(hit, 2);
     }
+    public static bool HitOwnedWindow(int x, int y, int pid, IntPtr window) {
+        IntPtr hit = WindowFromPoint(new POINT { X = x, Y = y });
+        return hit != IntPtr.Zero && WindowPid(hit) == pid &&
+            GetAncestor(hit, 2) == window && WindowPid(window) == pid;
+    }
+    public static System.Diagnostics.Process RetainProcess(int pid) {
+        var process = System.Diagnostics.Process.GetProcessById(pid);
+        try {
+            if (process.Handle == IntPtr.Zero) throw new InvalidOperationException("Process handle unavailable");
+            return process;
+        } catch { process.Dispose(); throw; }
+    }
+    public static void ReleasePointerButton(uint flags) {
+        INPUT input = new INPUT();
+        input.type = 0;
+        input.U.mi.dwFlags = flags;
+        Send(new INPUT[] { input });
+    }
     public static void ReleaseModifiers() {
         ushort[] keys = new ushort[] { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C };
         foreach (ushort key in keys) { try { Key(key, true); } catch {} }
@@ -521,8 +539,9 @@ function Focus-Target {
 }
 
 function Convert-Point {
-    param([object] $Point, [object] $State)
-    Assert-Target $State -Visible -Foreground
+    param([object] $Point, [object] $State, [switch] $AllowBackground)
+    Assert-Target $State -Visible
+    if (-not $AllowBackground) { Assert-Target $State -Foreground }
     $x = [double] $Point.x
     $y = [double] $Point.y
     $space = if ($Point.PSObject.Properties['coordinate_space']) {
@@ -659,17 +678,77 @@ function Send-PointerMove {
 }
 
 function Send-Click {
-    param([int] $X, [int] $Y, [string] $Button, [int] $Repeat, [int] $DurationMs)
+    param([object] $Session, [object] $Point, [string] $Button,
+          [int] $Repeat, [int] $DurationMs)
     $down = if ($Button -eq 'secondary') { 0x0008 } else { 0x0002 }
     $up = if ($Button -eq 'secondary') { 0x0010 } else { 0x0004 }
-    [EvidenceNative]::Pointer($X, $Y, 0, 0)
-    for ($i = 0; $i -lt $Repeat; $i++) {
-        Assert-CommandDeadline
-        [EvidenceNative]::Pointer($X, $Y, $down, 0)
-        if ($DurationMs -gt 0) { Start-Sleep -Milliseconds $DurationMs }
-        [EvidenceNative]::Pointer($X, $Y, $up, 0)
-        if ($Repeat -gt 1) { Start-Sleep -Milliseconds 80 }
+    # Retain the process before selecting a window, so PID reuse cannot adopt
+    # another lifetime between the requested button events.
+    $process = [EvidenceNative]::RetainProcess([int] $Session.target.pid)
+    try {
+        $initial = Get-TargetState $Session
+        for ($i = 0; $i -lt $Repeat; $i++) {
+            $attemptedDown = $false
+            $clickFailure = $null
+            try {
+                Assert-CommandDeadline
+                $xy = @(Resolve-ClickPoint $Session $Point $initial $process)
+                if ($i -gt 0) { Assert-ClickCursor $xy }
+                $attemptedDown = $true
+                [EvidenceNative]::Pointer([int] $xy[0], [int] $xy[1], $down, 0)
+                if ($DurationMs -gt 0) { Start-Sleep -Milliseconds $DurationMs }
+                Assert-CommandDeadline
+                # Refuse a changed window even after DOWN. The finally still
+                # releases that button, without moving into a foreign window.
+                $xy = @(Resolve-ClickPoint $Session $Point $initial $process)
+                Assert-ClickCursor $xy
+            } catch {
+                $clickFailure = $_
+                throw
+            } finally {
+                if ($attemptedDown) {
+                    try { [EvidenceNative]::ReleasePointerButton($up) } catch {
+                        if ($null -ne $clickFailure) {
+                            throw [InvalidOperationException]::new(
+                                $clickFailure.Exception.Message + '; matching button release also failed',
+                                $_.Exception)
+                        }
+                        throw
+                    }
+                }
+            }
+            if ($i + 1 -lt $Repeat) { Start-Sleep -Milliseconds 80 }
+        }
+    } finally {
+        $process.Dispose()
     }
+}
+
+function Assert-ClickCursor {
+    param([object[]] $Point)
+    $cursorX = 0; $cursorY = 0
+    if (-not [EvidenceNative]::Cursor([ref] $cursorX, [ref] $cursorY) -or
+        $cursorX -ne $Point[0] -or $cursorY -ne $Point[1]) {
+        throw 'click cursor changed from the requested point'
+    }
+}
+
+function Resolve-ClickPoint {
+    param([object] $Session, [object] $Point, [object] $Initial,
+          [object] $Process)
+    if ($Process.Id -ne [int] $Session.target.pid -or $Process.HasExited) {
+        throw 'click target process lifetime ended'
+    }
+    $state = Get-TargetState $Session
+    Assert-Target $state -Visible
+    if ($state.Handle -ne $Initial.Handle) { throw 'click target window changed' }
+    $xy = @(Convert-Point $Point $state -AllowBackground)
+    if (-not [EvidenceNative]::HitOwnedWindow(
+            [int] $xy[0], [int] $xy[1], [int] $Session.target.pid, $Initial.Handle)) {
+        throw 'click native hit-test is not owned by the selected PID and window'
+    }
+    if ($Process.HasExited) { throw 'click target process lifetime ended' }
+    return $xy
 }
 
 function Send-Drag {
@@ -961,15 +1040,12 @@ function Invoke-Interaction {
         $observation = [ordered]@{ pointer = 'move' }
         $message = 'pointer moved'
     } elseif (@('click', 'double-click') -contains $operation) {
-        Focus-Target $state
-        $state = Get-TargetState $Session
-        $xy = @(Convert-Point $Command.point $state)
         $button = if ($Command.PSObject.Properties['button']) { $Command.button } else { 'primary' }
         $duration = if ($Command.PSObject.Properties['duration_ms']) {
             [int] $Command.duration_ms
         } else { 0 }
         $repeat = if ($operation -eq 'double-click') { 2 } else { 1 }
-        Send-Click ([int] $xy[0]) ([int] $xy[1]) $button $repeat $duration
+        Send-Click $Session $Command.point $button $repeat $duration
         $observation = [ordered]@{ pointer = $operation }
         $message = 'pointer clicked'
     } elseif ($operation -eq 'drag') {

@@ -97,6 +97,12 @@ Use `observe` before and after every mutating operation. Pointer operations
 must identify the target PID, locate its owned window, resolve the requested
 point in physical screen coordinates, and hit-test that coordinate before
 posting input. Keyboard operations require the target to remain foreground.
+On Windows, an explicitly requested click may activate a visible background
+window at its unoccluded PID-owned point. It does not depend on the separate
+focus operation succeeding. Each button-down rechecks the retained process,
+selected window and physical hit-test; cleanup always attempts the matching
+button-up without moving the pointer if ownership changes. Other Windows input
+operations retain their foreground checks.
 Drivers release modifiers and restore normal input state during failure and
 cleanup.
 

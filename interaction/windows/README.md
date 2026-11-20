@@ -4,8 +4,16 @@
 Its embedded C# boundary uses Win32 top-level window enumeration, PID
 ownership checks, UI Automation (when the `accessibility` grant is present),
 `SendInput`, and `Graphics.CopyFromScreen`. Commands never supply native
-window handles. Input is rejected unless its pointer lies inside the selected
-PID-owned, foreground window.
+window handles. Pointer input is restricted to the selected PID-owned window.
+An explicit click may activate a background window only at the requested,
+visible, unoccluded point; both the hit window and its top-level ancestor must
+belong to the selected PID. A retained process handle and window identity are
+rechecked before every button-down and before the ordinary button-up. A matching
+button-up is always attempted in failure cleanup without moving the pointer.
+Cursor displacement after button-down refuses further click work and still
+releases the button at the current cursor position.
+Focus does not inject an activation click. Keyboard, movement, drag and wheel
+operations retain their foreground requirement.
 
 Run it from an interactive desktop PowerShell process:
 
