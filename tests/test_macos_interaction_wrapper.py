@@ -87,6 +87,8 @@ if op=='open':
         env = os.environ.copy()
         env.update(FIXTURE_ROOT=str(root), FIXTURE_MODE=mode,
                    FIXTURE_EXE=str(executable), FIXTURE_APP=str(app), TMPDIR=str(root))
+        if mode == "locked":
+            (install / ".interaction-command-lock").mkdir(mode=0o700)
         try:
             result = subprocess.run([str(wrapper), str(session), str(command), str(root / "artifacts")],
                                     env=env, capture_output=True, timeout=16)
@@ -120,6 +122,11 @@ if op=='open':
 
     def test_existing_helper_is_not_adopted(self):
         result, root = self.run_wrapper("existing")
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertFalse((root / "child.json").exists())
+
+    def test_existing_command_lock_is_not_adopted(self):
+        result, root = self.run_wrapper("locked")
         self.assertEqual(result.returncode, 75, result.stderr)
         self.assertFalse((root / "child.json").exists())
 
