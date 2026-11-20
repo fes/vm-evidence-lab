@@ -531,7 +531,7 @@ install_interaction_driver() (
             guest_scp "$platform" "$repository_root/interaction/windows/driver.ps1" \
                 "$root\\.driver.ps1.partial"
             guest_windows_powershell "$platform" \
-                "Move-Item -LiteralPath '$root\\.driver.ps1.partial' -Destination '$root\\driver.ps1' -Force; & '$root\\driver.ps1' -SelfTest | Out-Null"
+                "\$ErrorActionPreference='Stop'; Move-Item -LiteralPath '$root\\.driver.ps1.partial' -Destination '$root\\driver.ps1' -Force; & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '$root\\driver.ps1' -SelfTest | Out-Null; if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }"
             ;;
     esac
     printf 'interaction driver installed for %s at %s\n' "$platform" "$root"

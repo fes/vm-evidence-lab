@@ -95,6 +95,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'Schema contract tests failed.'
     }
+    & (Join-Path $root 'tests\test-windows-interaction-install.ps1')
     Write-Output 'Windows contract tests passed.'
 } finally {
     if (Test-Path -LiteralPath $work) {
