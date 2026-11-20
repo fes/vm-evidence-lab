@@ -36,6 +36,8 @@
       "relay_script": "C:\\Users\\evidence\\.local\\share\\vm-evidence-lab\\windows.ps1",
       "relay_repository_root": "C:\\Users\\evidence\\vm-evidence-sources",
       "adapter_root": "C:\\Users\\evidence\\.local\\share\\vm-evidence-adapters",
+      "interaction_driver_root": "C:\\Users\\evidence\\.local\\share\\vm-evidence-interaction",
+      "interaction_artifact_root": "C:\\Users\\evidence\\vm-evidence-interaction-artifacts",
       "qualification": "diagnostic"
     },
     "linux": {
@@ -48,6 +50,8 @@
       "relay_repository_root": "/home/evidence/vm-evidence-sources",
       "adapter_root": "/home/evidence/.local/share/vm-evidence-adapters",
       "relay_install_root": "/home/evidence/.local/share/vm-evidence-lab",
+      "interaction_driver_root": "/home/evidence/.local/share/vm-evidence-interaction",
+      "interaction_artifact_root": "/home/evidence/vm-evidence-interaction-artifacts",
       "qualification": "qualifying"
     },
     "macos": {
@@ -60,6 +64,8 @@
       "relay_repository_root": "/Users/evidence/vm-evidence-sources",
       "adapter_root": "/Users/evidence/.local/share/vm-evidence-adapters",
       "relay_install_root": "/Users/evidence/.local/share/vm-evidence-lab",
+      "interaction_driver_root": "/Users/evidence/.local/share/vm-evidence-interaction",
+      "interaction_artifact_root": "/Users/evidence/vm-evidence-interaction-artifacts",
       "qualification": "qualifying"
     }
   }

@@ -168,6 +168,35 @@ without them cannot install Tools). Attach each seed as a second CD-ROM.
 - Leave OpenSSH's default shell as `cmd.exe`. The controller sends
   `powershell.exe -Command "..."`; with PowerShell as the SSH default shell the
   outer shell expands `$_` and `$vars` and every controller command breaks.
+
+### Interactive desktop drivers
+
+Interactive drivers are installed explicitly after the normal baseline and are
+not part of the candidate product relay. Add separate
+`interaction_driver_root` and `interaction_artifact_root` values to every VM in
+private host configuration using the example in `host/config.example.json`.
+These directories must be owned by the evidence desktop user and must not be
+inside a candidate checkout.
+
+The Linux baseline needs X11, `xdotool`, `wmctrl`, `xwininfo`, a screenshot tool,
+and optionally `xclip` plus Python AT-SPI bindings. The guest setup script
+installs those dependencies. The Windows driver uses the production user32,
+UI Automation and `CopyFromScreen` APIs and does not add a package. macOS
+requires Xcode Command Line Tools for compilation and a stable signed
+interaction app with Accessibility permission; enable Screen Recording only if
+guest-side screenshots are required.
+
+With a VM already running under the lab lock:
+
+```sh
+VM_EVIDENCE_CONFIG=/private/config.json \
+  host/controller.sh interaction-install <windows|linux|macos>
+```
+
+This command never starts a VM. Do not run it concurrently with product
+evidence. Its installed driver executes only the versioned schema operations
+documented in `docs/INTERACTIVE_EVIDENCE.md`; TCC failure, missing GUI sessions,
+Wayland-only sessions and unsupported video are explicit diagnostics.
 - Verify autologon survives `prlctl restart`.
 
 ### macOS (same major version as the host)

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/fes/vm-evidence-lab/schemas/interaction-result-v1.json",
+  "title": "VM evidence interaction result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "sequence",
+    "status",
+    "operation",
+    "started_at",
+    "completed_at",
+    "duration_ms",
+    "diagnostics",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["pass", "fail", "unsupported"] },
+    "operation": { "type": "string" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver", "platform", "target", "message"],
+      "properties": {
+        "driver": { "type": "string", "maxLength": 256 },
+        "platform": { "enum": ["windows", "linux", "macos"] },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pid", "window_found", "foreground", "visible"],
+          "properties": {
+            "pid": { "type": "integer", "minimum": 0 },
+            "window_found": { "type": "boolean" },
+            "foreground": { "type": "boolean" },
+            "visible": { "type": "boolean" },
+            "window_id": { "type": "string", "maxLength": 128 },
+            "geometry": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["x", "y", "width", "height"],
+              "properties": {
+                "x": { "type": "number" },
+                "y": { "type": "number" },
+                "width": { "type": "number", "minimum": 0 },
+                "height": { "type": "number", "minimum": 0 },
+                "scale_factor": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "message": { "type": "string", "maxLength": 4096 },
+        "native_error": { "type": ["string", "null"], "maxLength": 4096 },
+        "host_guest_clock_skew_ms": { "type": ["number", "null"] },
+        "tcc": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "accessibility": { "type": "boolean" },
+            "screen_recording": { "type": "boolean" }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "observation": { "type": "object", "additionalProperties": true },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "path", "size", "sha256"],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "size": { "type": "integer", "minimum": 0 },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

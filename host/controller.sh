@@ -7,6 +7,7 @@ repository_root=$(unset CDPATH; cd -- "$script_dir/.." && pwd)
 . "$script_dir/lib.sh"
 
 config_path=${VM_EVIDENCE_CONFIG:-"$HOME/.config/vm-evidence-lab/config.json"}
+python_command=${PYTHON:-python3}
 
 watchdog_seconds() {
     phase=$1
@@ -21,7 +22,7 @@ poll_seconds() {
 
 load_config() {
     [ -f "$config_path" ] || vm_evidence_die "configuration not found: $config_path"
-    for command in git jq scp ssh uuidgen; do
+    for command in git jq scp ssh uuidgen "$python_command"; do
         vm_evidence_require_command "$command"
     done
     jq -e '
@@ -78,6 +79,21 @@ guest_scp() {
     else
         scp -P "$port" -o BatchMode=yes -o ConnectTimeout=10 \
             "$local_path" "$(guest_target "$platform"):$remote_path"
+    fi
+}
+
+guest_scp_from() {
+    platform=$1
+    remote_path=$2
+    local_path=$3
+    key=$(jq -er '.ssh_private_key // empty' "$config_path")
+    port=$(vm_field "$platform" port)
+    if [ -n "$key" ]; then
+        scp -i "$key" -P "$port" -o BatchMode=yes -o ConnectTimeout=10 \
+            "$(guest_target "$platform"):$remote_path" "$local_path"
+    else
+        scp -P "$port" -o BatchMode=yes -o ConnectTimeout=10 \
+            "$(guest_target "$platform"):$remote_path" "$local_path"
     fi
 }
 
@@ -466,6 +482,232 @@ cleanup_run() {
     exit "$exit_status"
 }
 
+interaction_driver_root() {
+    vm_field "$1" interaction_driver_root
+}
+
+interaction_artifact_root() {
+    vm_field "$1" interaction_artifact_root
+}
+
+interaction_require_running() {
+    platform=$1
+    name=$(vm_name "$platform")
+    provider_vm_exists "$name" || vm_evidence_die "VM not found: $name"
+    provider_vm_running "$name" ||
+        vm_evidence_die "$platform VM is not running; interactive control never starts it"
+}
+
+install_interaction_driver() (
+    platform=$1
+    lock_path="$(jq -er '.artifact_root' "$config_path")/.locks/lab"
+    vm_evidence_acquire_lock "$lock_path"
+    trap 'vm_evidence_release_lock "$lock_path"' EXIT
+    trap 'exit 130' HUP INT TERM
+    interaction_require_running "$platform"
+    root=$(interaction_driver_root "$platform")
+    case "$platform" in
+        linux)
+            guest_ssh "$platform" "mkdir -p '$root' '$(interaction_artifact_root "$platform")'"
+            guest_scp "$platform" "$repository_root/interaction/linux/driver.py" "$root/.driver.py.partial"
+            guest_scp "$platform" "$repository_root/interaction/linux/driver.sh" "$root/.driver.sh.partial"
+            guest_ssh "$platform" \
+                "mv '$root/.driver.py.partial' '$root/driver.py'; mv '$root/.driver.sh.partial' '$root/driver.sh'; chmod 700 '$root/driver.py' '$root/driver.sh'; '$root/driver.sh' --self-test >/dev/null"
+            ;;
+        macos)
+            source_root="$root/source"
+            guest_ssh "$platform" "mkdir -p '$source_root' '$(interaction_artifact_root "$platform")'"
+            for file in Models.swift Driver.swift main.swift Info.plist build.sh driver-command.sh; do
+                guest_scp "$platform" "$repository_root/interaction/macos/$file" \
+                    "$source_root/.$file.partial"
+                guest_ssh "$platform" "mv '$source_root/.$file.partial' '$source_root/$file'"
+            done
+            guest_ssh "$platform" \
+                "chmod 700 '$source_root/build.sh' '$source_root/driver-command.sh'; '$source_root/build.sh' '$root/build' >/dev/null; rm -rf '$root/FesTermVMEvidenceInteraction.app'; mv '$root/build/FesTermVMEvidenceInteraction.app' '$root/FesTermVMEvidenceInteraction.app'; cp '$source_root/driver-command.sh' '$root/driver-command.sh'; chmod 700 '$root/driver-command.sh'; '$root/FesTermVMEvidenceInteraction.app/Contents/MacOS/FesTermVMEvidenceInteraction' --self-test >/dev/null"
+            ;;
+        windows)
+            guest_ssh "$platform" \
+                "powershell.exe -NoProfile -NonInteractive -Command \"New-Item -ItemType Directory -Force -Path '$root','$(interaction_artifact_root "$platform")' | Out-Null\""
+            guest_scp "$platform" "$repository_root/interaction/windows/driver.ps1" \
+                "$root\\.driver.ps1.partial"
+            guest_windows_powershell "$platform" \
+                "Move-Item -LiteralPath '$root\\.driver.ps1.partial' -Destination '$root\\driver.ps1' -Force; & '$root\\driver.ps1' -SelfTest | Out-Null"
+            ;;
+    esac
+    printf 'interaction driver installed for %s at %s\n' "$platform" "$root"
+)
+
+run_interaction() (
+    platform=$1
+    session=$2
+    command=$3
+    output_directory=$4
+    vm_evidence_validate_platform "$platform"
+    [ -f "$session" ] && [ -f "$command" ] ||
+        vm_evidence_die "interaction session and command must be regular files"
+    [ ! -e "$output_directory" ] ||
+        vm_evidence_die "interaction output directory must be fresh"
+    lock_path="$(jq -er '.artifact_root' "$config_path")/.locks/lab"
+    vm_evidence_acquire_lock "$lock_path"
+    remote_session=
+    remote_command=
+    cleanup_interaction_request() {
+        set +e
+        if [ -n "$remote_session" ] && [ -n "$remote_command" ]; then
+            case "$platform" in
+                windows)
+                    guest_windows_powershell "$platform" \
+                        "Remove-Item -LiteralPath '$remote_session','$remote_command' -Force -ErrorAction SilentlyContinue" \
+                        >/dev/null 2>&1
+                    ;;
+                *)
+                    guest_ssh "$platform" "rm -f '$remote_session' '$remote_command'" \
+                        >/dev/null 2>&1
+                    ;;
+            esac
+        fi
+        vm_evidence_release_lock "$lock_path"
+    }
+    trap cleanup_interaction_request EXIT
+    trap 'exit 130' HUP INT TERM
+    "$python_command" "$repository_root/host/interactive.py" \
+        --validate-request --session "$session" --command "$command" >/dev/null
+    interaction_require_running "$platform"
+    session_id=$(jq -er '.session_id' "$session")
+    sequence=$(jq -er '.sequence' "$command")
+    maximum_commands=$(jq -er '.limits.maximum_commands' "$session")
+    state_root="$(jq -er '.artifact_root' "$config_path")/.interaction-state"
+    sequence_file="$state_root/$platform-$session_id.sequence"
+    mkdir -p "$state_root"
+    if [ -f "$sequence_file" ]; then
+        state=$(cat "$sequence_file")
+        case "$state" in
+            "ready "*)
+                expected_sequence=${state#ready }
+                ;;
+            "inflight "*)
+                vm_evidence_die "interaction session $session_id has an indeterminate in-flight command; use a new session"
+                ;;
+            *)
+                vm_evidence_die "interaction session $session_id has corrupt sequence state"
+                ;;
+        esac
+    else
+        expected_sequence=1
+    fi
+    [ "$sequence" -eq "$expected_sequence" ] ||
+        vm_evidence_die "interaction session $session_id expected sequence $expected_sequence, received $sequence"
+    [ "$sequence" -le "$maximum_commands" ] ||
+        vm_evidence_die "interaction session $session_id exhausted its command bound"
+    printf 'inflight %s\n' "$sequence" >"$sequence_file.partial"
+    mv "$sequence_file.partial" "$sequence_file"
+    request_id="interactive-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    case "$platform" in
+        windows)
+            remote_session="$(vm_field "$platform" relay_spool)\\interactions\\$request_id.session.json"
+            remote_command="$(vm_field "$platform" relay_spool)\\interactions\\$request_id.command.json"
+            ;;
+        *)
+            remote_session="$(vm_field "$platform" relay_spool)/interactions/$request_id.session.json"
+            remote_command="$(vm_field "$platform" relay_spool)/interactions/$request_id.command.json"
+            ;;
+    esac
+    mkdir -p "$output_directory"
+    case "$platform" in
+        windows)
+            guest_ssh "$platform" \
+                "powershell.exe -NoProfile -NonInteractive -Command \"New-Item -ItemType Directory -Force -Path '$(vm_field "$platform" relay_spool)\\interactions' | Out-Null\""
+            ;;
+        *)
+            guest_ssh "$platform" "mkdir -p '$(vm_field "$platform" relay_spool)/interactions'"
+            ;;
+    esac
+    guest_scp "$platform" "$session" "$remote_session"
+    guest_scp "$platform" "$command" "$remote_command"
+    host_result="$output_directory/result.json"
+    root=$(interaction_driver_root "$platform")
+    artifact_root=$(interaction_artifact_root "$platform")
+    timeout_ms=$(jq -er '.limits.command_timeout_ms' "$session")
+    key=$(jq -er '.ssh_private_key // empty' "$config_path")
+    port=$(vm_field "$platform" port)
+    case "$platform" in
+        linux)
+            remote_interaction="systemd-run --user --wait --pipe --collect --quiet '$root/driver.sh' --session '$remote_session' --command '$remote_command' --artifact-directory '$artifact_root'"
+            if [ -n "$key" ]; then
+                "$python_command" "$repository_root/host/bounded_exec.py" \
+                    --timeout-ms "$timeout_ms" -- \
+                    ssh -i "$key" -p "$port" -o BatchMode=yes -o ConnectTimeout=10 \
+                    "$(guest_target "$platform")" "$remote_interaction" >"$host_result"
+            else
+                "$python_command" "$repository_root/host/bounded_exec.py" \
+                    --timeout-ms "$timeout_ms" -- \
+                    ssh -p "$port" -o BatchMode=yes -o ConnectTimeout=10 \
+                    "$(guest_target "$platform")" "$remote_interaction" >"$host_result"
+            fi
+            ;;
+        macos)
+            "$python_command" "$repository_root/host/bounded_exec.py" \
+                --timeout-ms "$timeout_ms" -- \
+                prlctl exec "$(vm_name "$platform")" --current-user \
+                "$root/driver-command.sh" "$remote_session" "$remote_command" "$artifact_root" \
+                >"$host_result"
+            ;;
+        windows)
+            "$python_command" "$repository_root/host/bounded_exec.py" \
+                --timeout-ms "$timeout_ms" -- \
+                prlctl exec "$(vm_name "$platform")" --current-user \
+                powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File \
+                "$root\\driver.ps1" -SessionPath "$remote_session" \
+                -CommandPath "$remote_command" -ArtifactDirectory "$artifact_root" \
+                >"$host_result"
+            ;;
+    esac
+    "$python_command" "$repository_root/host/interactive.py" \
+        --validate-result "$host_result" \
+        --session "$session" --command "$command" >/dev/null
+    guest_root=$artifact_root
+    jq -r '.artifacts[] | [.name, .path, (.size|tostring), .sha256] | @tsv' "$host_result" |
+    while IFS="$(printf '\t')" read -r name path size digest; do
+        case "$platform" in
+            windows)
+                [ "$path" = "$guest_root\\$name" ] ||
+                    [ "$path" = "$guest_root\\$name.png" ] ||
+                    vm_evidence_die "driver reported an unexpected artifact path"
+                ;;
+            *)
+                [ "$path" = "$guest_root/$name" ] ||
+                    [ "$path" = "$guest_root/$name.png" ] ||
+                    vm_evidence_die "driver reported an unexpected artifact path"
+                ;;
+        esac
+        mkdir -p "$output_directory/artifacts"
+        local_artifact="$output_directory/artifacts/$name"
+        guest_scp_from "$platform" "$path" "$local_artifact"
+        "$python_command" - "$local_artifact" "$size" "$digest" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+expected_size = int(sys.argv[2])
+expected_digest = sys.argv[3]
+digest = hashlib.sha256()
+actual_size = 0
+with path.open("rb") as stream:
+    for block in iter(lambda: stream.read(1024 * 1024), b""):
+        actual_size += len(block)
+        digest.update(block)
+if actual_size != expected_size or digest.hexdigest() != expected_digest:
+    raise SystemExit("copied artifact does not match guest result metadata")
+PY
+    done
+    printf 'ready %s\n' "$((sequence + 1))" >"$sequence_file.partial"
+    mv "$sequence_file.partial" "$sequence_file"
+    printf '%s\n' "$host_result"
+    jq -e '.status == "pass"' "$host_result" >/dev/null ||
+        vm_evidence_die "interaction command did not pass; validated result retained in $host_result"
+)
+
 run_platform() {
     platform=$1
     request=$2
@@ -538,6 +780,10 @@ Usage:
   controller.sh status <windows|linux|macos>
   controller.sh reset <windows|linux|macos>
   controller.sh capture <windows|linux|macos> <png-path>
+  controller.sh interaction-capabilities <windows|linux|macos>
+  controller.sh interaction-install <windows|linux|macos>
+  controller.sh interaction-dry-run <session.json> <command.json>
+  controller.sh interaction <windows|linux|macos> <session.json> <command.json> <fresh-output-dir>
   controller.sh run <windows|linux|macos> <host-request.json>
   controller.sh all <host-request.json>
 EOF
@@ -562,6 +808,25 @@ case "$1" in
         [ "$#" -eq 3 ] || usage
         vm_evidence_validate_platform "$2"
         capture_vm "$2" "$3"
+        ;;
+    interaction-capabilities)
+        [ "$#" -eq 2 ] || usage
+        vm_evidence_validate_platform "$2"
+        provider_interaction_capabilities
+        ;;
+    interaction-install)
+        [ "$#" -eq 2 ] || usage
+        vm_evidence_validate_platform "$2"
+        install_interaction_driver "$2"
+        ;;
+    interaction-dry-run)
+        [ "$#" -eq 3 ] || usage
+        "$python_command" "$repository_root/host/interactive.py" \
+            --dry-run --session "$2" --command "$3"
+        ;;
+    interaction)
+        [ "$#" -eq 5 ] || usage
+        run_interaction "$2" "$3" "$4" "$5"
         ;;
     run)
         [ "$#" -eq 3 ] || usage

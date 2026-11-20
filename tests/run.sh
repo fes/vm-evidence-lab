@@ -21,6 +21,7 @@ for command in git jq "$python_command"; do
 done
 
 "$python_command" "$root/tests/test_contract.py"
+"$python_command" "$root/tests/test_interaction.py"
 "$python_command" "$root/tests/test_provision.py"
 
 cp "$root/tests/fixtures/fake-adapter/policy.json" "$work/adapters/fake/policy.json"
@@ -153,7 +154,12 @@ if command -v shellcheck >/dev/null 2>&1; then
     shellcheck "$root/host/controller.sh" "$root/host/lib.sh" \
         "$root/providers/parallels.sh" "$root/relay/common.sh" \
         "$root/relay/unix.sh" "$root/relay/install-linux.sh" \
-        "$root/relay/install-macos.sh" "$root/tests/run.sh"
+        "$root/relay/install-macos.sh" "$root/tests/run.sh" \
+        "$root/interaction/macos/build.sh" \
+        "$root/interaction/macos/driver-command.sh" \
+        "$root/interaction/macos/driver.sh" \
+        "$root/interaction/macos/install.sh" \
+        "$root/interaction/linux/driver.sh"
 fi
 
 echo 'Unix contract tests passed.'

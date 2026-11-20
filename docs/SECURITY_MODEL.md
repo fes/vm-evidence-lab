@@ -9,6 +9,12 @@ watchdog-safe modes. Protect it outside all repositories.
 The controller, relay, provider, and installed adapter are trusted automation.
 Candidate product commits and job payloads are untrusted.
 
+Interactive desktop control is a separate trusted-operator surface. An
+interactive session is not a job, does not run candidate commands, and is not
+authorized through product `payload`. Session grants, operation types,
+timeouts, artifact roots and sequence numbers are validated before the
+guest-side driver receives input.
+
 ## Authority boundaries
 
 - A request names only allowlisted source IDs and exact commits, never local
@@ -44,6 +50,9 @@ evidence may leave private storage.
 
 Disable guest shared folders, shared profile, shared clipboard, and cloud
 folder integration. Recheck these controls whenever a baseline changes.
+Interactive clipboard tests may replace and verify a known sentinel only.
+They must not read or preserve the previous clipboard. Screenshots,
+accessibility snapshots, video and OCR output are sensitive private evidence.
 
 ## Deliberate limitations
 

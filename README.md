@@ -24,6 +24,8 @@ and acceptance decisions.
 - atomic job publication, claim, results, and stale-job quarantine;
 - one host-wide lock suitable for an exclusive physical device;
 - Unix and Windows relays with pinned adapters;
+- bounded guest-side desktop interaction drivers for macOS, X11/Linux and Windows;
+- host-side Parallels window screenshots and bounded ScreenCaptureKit recording;
 - versioned JSON schemas and fake-adapter contract tests.
 - pinned Parallels host profiles with installer-hash preflight, macOS ARM VM
   creation, and stopped-VM resource/isolation configuration.
@@ -54,6 +56,12 @@ On Linux or macOS:
 On Windows:
 
 ```powershell
+
+Interactive desktop control is explicitly separate from normal product jobs.
+It never starts or resets a VM. See
+[`docs/INTERACTIVE_EVIDENCE.md`](docs/INTERACTIVE_EVIDENCE.md) for the
+capability contracts, installation, TCC requirements, diagnostics and
+security boundary.powershell
 ./tests/run-windows.ps1
 ```
 

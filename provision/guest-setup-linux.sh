@@ -36,7 +36,8 @@ apt-get install -y \
     build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev \
     libwayland-dev libx11-dev libxcb1-dev libvulkan-dev mesa-vulkan-drivers \
     xvfb vttest less vim-nox neovim tmux screen htop gh git jq xdotool wmctrl \
-    imagemagick x11-utils scrot python3 curl openssh-server dkms \
+    imagemagick x11-utils scrot xclip python3 python3-gi at-spi2-core \
+    gir1.2-atspi-2.0 curl openssh-server dkms \
     linux-headers-generic \
     libudev-dev libfontconfig1-dev libfreetype-dev libxcursor-dev libxi-dev \
     libxrandr-dev libasound2-dev libssl-dev libxcb-xfixes0-dev \

@@ -17,7 +17,15 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual(document["type"], "object")
 
     def test_external_contracts_reject_unknown_root_fields(self) -> None:
-        for name in ("host-request-v1.json", "job-v1.json", "result-v1.json", "manifest-v1.json"):
+        for name in (
+            "host-request-v1.json",
+            "interaction-command-v1.json",
+            "interaction-result-v1.json",
+            "interaction-session-v1.json",
+            "job-v1.json",
+            "manifest-v1.json",
+            "result-v1.json",
+        ):
             with self.subTest(schema=name):
                 document = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
                 self.assertFalse(document["additionalProperties"])
@@ -68,6 +76,43 @@ class ContractTests(unittest.TestCase):
                 "requested_sources",
             }.issubset(required)
         )
+
+    def test_interaction_session_has_explicit_grants_and_limits(self) -> None:
+        document = json.loads((SCHEMAS / "interaction-session-v1.json").read_text(encoding="utf-8"))
+        self.assertFalse(document["additionalProperties"])
+        self.assertIn("grants", document["required"])
+        self.assertIn("limits", document["required"])
+        required_grants = set(document["properties"]["grants"]["items"]["enum"])
+        self.assertTrue(
+            {"observe", "keyboard", "pointer", "wheel", "screenshot", "video"}.issubset(
+                required_grants
+            )
+        )
+
+    def test_interaction_command_has_no_execution_authority_fields(self) -> None:
+        document = json.loads(
+            (SCHEMAS / "interaction-command-v1.json").read_text(encoding="utf-8")
+        )
+        forbidden = {
+            "arguments",
+            "command",
+            "environment",
+            "executable",
+            "path",
+            "shell",
+            "working_directory",
+        }
+        self.assertFalse(forbidden.intersection(document["properties"]))
+        self.assertNotIn("command", document["properties"]["operation"]["enum"])
+
+    def test_interaction_artifacts_are_relative_bounded_names(self) -> None:
+        document = json.loads(
+            (SCHEMAS / "interaction-command-v1.json").read_text(encoding="utf-8")
+        )
+        artifact_name = document["properties"]["artifact"]["properties"]["name"]
+        self.assertIn("pattern", artifact_name)
+        self.assertNotIn("/", artifact_name["pattern"])
+        self.assertIsNone(re.fullmatch(artifact_name["pattern"], "../evidence.png"))
 
 
 if __name__ == "__main__":

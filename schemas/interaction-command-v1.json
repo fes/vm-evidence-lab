@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/fes/vm-evidence-lab/schemas/interaction-command-v1.json",
+  "title": "VM evidence interaction command v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "sequence",
+    "operation"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "operation": {
+      "enum": [
+        "capabilities",
+        "observe",
+        "focus",
+        "key",
+        "text",
+        "move",
+        "click",
+        "double-click",
+        "drag",
+        "scroll",
+        "wait",
+        "screenshot",
+        "clipboard-set-sentinel",
+        "video-start",
+        "video-stop"
+      ]
+    },
+    "key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "enum": [
+            "escape",
+            "tab",
+            "return",
+            "space",
+            "backspace",
+            "delete",
+            "home",
+            "end",
+            "page-up",
+            "page-down",
+            "up",
+            "down",
+            "left",
+            "right",
+            "a-z",
+            "0-9"
+          ]
+        },
+        "character": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1
+        },
+        "modifiers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["shift", "control", "alt", "command", "meta"] }
+        },
+        "phase": { "enum": ["press", "down", "up"], "default": "press" }
+      }
+    },
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value"],
+      "properties": {
+        "value": { "type": "string", "maxLength": 4096 },
+        "sensitive": { "type": "boolean", "default": false }
+      }
+    },
+    "point": {
+      "$ref": "#/$defs/point"
+    },
+    "destination": {
+      "$ref": "#/$defs/point"
+    },
+    "button": { "enum": ["primary", "secondary"] },
+    "duration_ms": { "type": "integer", "minimum": 0, "maximum": 120000 },
+    "scroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delta_x", "delta_y", "unit"],
+      "properties": {
+        "delta_x": { "type": "number", "minimum": -100000, "maximum": 100000 },
+        "delta_y": { "type": "number", "minimum": -100000, "maximum": 100000 },
+        "unit": { "enum": ["line", "pixel"] }
+      }
+    },
+    "wait": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["condition", "timeout_ms"],
+      "properties": {
+        "condition": {
+          "enum": [
+            "foreground-target",
+            "target-visible",
+            "target-geometry-stable",
+            "frame-stable"
+          ]
+        },
+        "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 120000 },
+        "stable_for_ms": { "type": "integer", "minimum": 0, "maximum": 30000 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "scope": { "enum": ["target-window", "guest-display"], "default": "target-window" }
+      }
+    },
+    "clipboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value"],
+      "properties": {
+        "value": {
+          "type": "string",
+          "pattern": "^vm-evidence-sentinel:[A-Za-z0-9._-]{1,256}$",
+          "maxLength": 277
+        },
+        "verify": { "type": "boolean", "default": true }
+      }
+    },
+    "video": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_name", "maximum_seconds"],
+      "properties": {
+        "artifact_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "maximum_seconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+        "frames_per_second": { "type": "integer", "minimum": 1, "maximum": 30 }
+      }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 100000 },
+        "y": { "type": "number", "minimum": 0, "maximum": 100000 },
+        "coordinate_space": {
+          "enum": ["physical-screen", "target-relative"],
+          "default": "physical-screen"
+        }
+      }
+    }
+  }
+}
