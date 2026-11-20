@@ -83,6 +83,12 @@ cleanup() {
     done
     if [ -n "$open_pid" ]; then
         kill -TERM "$open_pid" 2>/dev/null || :
+        open_deadline=$(( $(date +%s) + 1 ))
+        while kill -0 "$open_pid" 2>/dev/null && [ "$(date +%s)" -lt "$open_deadline" ]; do
+            sleep 0.1
+        done
+        # This is our unreaped direct child, so its PID cannot have been reused.
+        kill -KILL "$open_pid" 2>/dev/null || :
         wait "$open_pid" 2>/dev/null || :
     fi
     if [ -n "${remaining:-}" ]; then
@@ -90,6 +96,7 @@ cleanup() {
         exit 125
     fi
     rm -rf "$work"
+    rmdir "$command_lock"
     exit "$status"
 }
 [ -z "$(helper_rows)" ] || {
@@ -97,6 +104,14 @@ cleanup() {
     rm -rf "$work"
     exit 75
 }
+# Serialize wrappers too: the initial process check alone has a launch race.
+# An unresolved cleanup retains this private lock for explicit investigation.
+command_lock="$script_dir/.interaction-command-lock"
+if ! mkdir -m 700 "$command_lock"; then
+    echo "macOS interaction command is already owned; refusing concurrency" >&2
+    rm -rf "$work"
+    exit 75
+fi
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT

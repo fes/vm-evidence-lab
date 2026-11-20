@@ -56,6 +56,14 @@ moving the bundle can invalidate an existing grant. The bundle identifier is
   < command.json > result.json
 ```
 
+The host controller's installed `driver-command.sh` launches the stable bundle
+through LaunchServices (`open -n -g -W`), so its own Accessibility grant applies
+rather than the remote transport's identity. It uses private per-command files,
+refuses a concurrent helper, and bounds startup plus exact-child cleanup. The
+operation's declared timeout remains unchanged; the host allows another 15
+seconds for transport and cleanup. A cleanup failure retains private evidence
+and fails closed. This path neither requests permissions nor re-signs the app.
+
 Only the `capabilities`, `observe`, `focus`, `key`, `text`, `move`, `click`,
 `double-click`, `drag`, `scroll`, `wait`, `screenshot`, and
 `clipboard-set-sentinel` operations perform work. `video-start` and
