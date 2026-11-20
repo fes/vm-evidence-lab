@@ -646,8 +646,11 @@ run_interaction() (
             fi
             ;;
         macos)
+            # The guest wrapper enforces the operation budget plus bounded LS
+            # startup/child cleanup. Keep the host alive until that cleanup ends.
+            mac_transport_timeout_ms=$((timeout_ms + 15000))
             "$python_command" "$repository_root/host/bounded_exec.py" \
-                --timeout-ms "$timeout_ms" -- \
+                --timeout-ms "$mac_transport_timeout_ms" -- \
                 prlctl exec "$(vm_name "$platform")" --current-user \
                 "$root/driver-command.sh" "$remote_session" "$remote_command" "$artifact_root" \
                 >"$host_result"
