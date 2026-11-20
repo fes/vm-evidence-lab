@@ -195,6 +195,43 @@ class InteractionControllerTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 124)
         self.assertIn("exceeded 50 ms", completed.stderr)
 
+    def test_current_user_windows_driver_hides_only_its_own_console(self):
+        controller = (ROOT / "host/controller.sh").read_text(encoding="utf-8")
+        invocation = controller[controller.index('prlctl exec "$(vm_name "$platform")" --current-user \\\n                powershell.exe'):]
+        invocation = invocation[:invocation.index('>"$host_result"')]
+        self.assertIn("-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File", invocation)
+        self.assertIn('"$root\\\\driver.ps1"', invocation)
+        self.assertNotIn("Set-ExecutionPolicy", invocation)
+
+    def test_shell_artifact_fields_preserve_windows_backslashes(self):
+        controller = (ROOT / "host/controller.sh").read_text(encoding="utf-8")
+        start = controller.index("    jq -r '.artifacts[] | @base64'")
+        end = controller.index('        case "$platform" in', start)
+        decoder = controller[start:end]
+        # Execute the production transport decoder, without guest I/O.
+        script = ('host_result=$1\n' + decoder +
+                  "        printf '%s\\0%s\\0%s\\0%s\\0' "+
+                  '\"$name\" \"$path\" \"$size\" \"$digest\"\n    done\n')
+        artifact = {"name": "screen.png",
+                    "path": r"C:\Users\evidence\private folder\screen.png",
+                    "size": 123, "sha256": "a" * 64}
+        with tempfile.TemporaryDirectory() as temporary:
+            document = pathlib.Path(temporary) / "result.json"
+            document.write_text(json.dumps({"artifacts": [artifact]}))
+            result = subprocess.run(["sh", "-eu", "-c", script, "test", str(document)],
+                                    check=True, capture_output=True)
+        self.assertEqual(result.stdout.split(b"\0")[:-1],
+                         [str(artifact[key]).encode() for key in
+                          ("name", "path", "size", "sha256")])
+        start = controller.index('        scp_path=$path')
+        end = controller.index('        guest_scp_from', start)
+        conversion = controller[start:end]
+        script = 'platform=windows; path=$1\n' + conversion + 'printf \"%s\" \"$scp_path\"'
+        result = subprocess.run(["sh", "-eu", "-c", script, "test", artifact["path"]],
+                                check=True, capture_output=True)
+        self.assertEqual(result.stdout.decode(), artifact["path"].replace("\\", "/"))
+
+
     def test_artifact_result_cannot_escape_root(self):
         request = command(operation="screenshot", artifact={"name": "screen.png"})
         with tempfile.TemporaryDirectory() as temporary:

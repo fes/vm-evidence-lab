@@ -656,7 +656,7 @@ run_interaction() (
             "$python_command" "$repository_root/host/bounded_exec.py" \
                 --timeout-ms "$timeout_ms" -- \
                 prlctl exec "$(vm_name "$platform")" --current-user \
-                powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File \
+                powershell.exe -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File \
                 "$root\\driver.ps1" -SessionPath "$remote_session" \
                 -CommandPath "$remote_command" -ArtifactDirectory "$artifact_root" \
                 >"$host_result"
@@ -666,8 +666,14 @@ run_interaction() (
         --validate-result "$host_result" \
         --session "$session" --command "$command" >/dev/null
     guest_root=$artifact_root
-    jq -r '.artifacts[] | [.name, .path, (.size|tostring), .sha256] | @tsv' "$host_result" |
-    while IFS="$(printf '\t')" read -r name path size digest; do
+    # TSV escapes Windows backslashes; keep each validated artifact as JSON.
+    jq -r '.artifacts[] | @base64' "$host_result" |
+    while IFS= read -r artifact_row; do
+        artifact_json=$(printf '%s' "$artifact_row" | jq -Rr '@base64d')
+        name=$(printf '%s' "$artifact_json" | jq -r '.name')
+        path=$(printf '%s' "$artifact_json" | jq -r '.path')
+        size=$(printf '%s' "$artifact_json" | jq -r '.size')
+        digest=$(printf '%s' "$artifact_json" | jq -r '.sha256')
         case "$platform" in
             windows)
                 [ "$path" = "$guest_root\\$name" ] ||
@@ -682,7 +688,12 @@ run_interaction() (
         esac
         mkdir -p "$output_directory/artifacts"
         local_artifact="$output_directory/artifacts/$name"
-        guest_scp_from "$platform" "$path" "$local_artifact"
+        scp_path=$path
+        if [ "$platform" = windows ]; then
+            # OpenSSH's remote path uses forward slashes; validate native paths above.
+            scp_path=$(printf '%s' "$path" | tr '\\' '/')
+        fi
+        guest_scp_from "$platform" "$scp_path" "$local_artifact"
         "$python_command" - "$local_artifact" "$size" "$digest" <<'PY'
 import hashlib
 import pathlib

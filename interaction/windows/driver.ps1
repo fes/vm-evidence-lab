@@ -34,6 +34,9 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 public static class EvidenceNative {
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+
     [StructLayout(LayoutKind.Sequential)] public struct RECT {
         public int Left, Top, Right, Bottom;
     }
@@ -464,11 +467,27 @@ function Assert-CommandDeadline {
 
 function Get-TargetState {
     param([object] $Session)
-    $index = if ($Session.target.PSObject.Properties['window_index']) {
-        [int] $Session.target.window_index
-    } else { 0 }
     $handles = @([EvidenceNative]::WindowsForPid([int] $Session.target.pid))
-    $handle = if ($index -lt $handles.Count) { $handles[$index] } else { [IntPtr]::Zero }
+    if ($Session.target.PSObject.Properties['window_index']) {
+        # Explicit indices keep their original position, including hidden windows.
+        $index = [int] $Session.target.window_index
+        $handle = if ($index -lt $handles.Count) { $handles[$index] } else { [IntPtr]::Zero }
+    } else {
+        # Frameworks also own hidden IME/message windows. Never guess between
+        # multiple visible windows or silently choose a foreground replacement.
+        $candidates = @($handles | Where-Object {
+            $candidateRect = New-Object EvidenceNative+RECT
+            [EvidenceNative]::WindowPid($_) -eq [int] $Session.target.pid -and
+                [EvidenceNative]::Visible($_) -and
+                [EvidenceNative]::Rectangle($_, [ref] $candidateRect) -and
+                $candidateRect.Right -gt $candidateRect.Left -and
+                $candidateRect.Bottom -gt $candidateRect.Top
+        })
+        if ($candidates.Count -ne 1) {
+            throw 'omitted window_index requires exactly one visible positive-area target window'
+        }
+        $handle = $candidates[0]
+    }
     $rect = New-Object EvidenceNative+RECT
     $found = $handle -ne [IntPtr]::Zero -and
         [EvidenceNative]::WindowPid($handle) -eq [int] $Session.target.pid -and
@@ -789,12 +808,12 @@ function Capture-Screenshot {
         }
         $sha = (Get-FileHash -LiteralPath $paths.Partial -Algorithm SHA256).Hash.ToLowerInvariant()
         Move-Item -LiteralPath $paths.Partial -Destination $paths.Final
-        return ,@([ordered]@{
+        return [ordered]@{
             name = $Command.artifact.name
             path = $paths.Final
             size = [long] $item.Length
             sha256 = $sha
-        })
+        }
     } finally {
         if ($graphics) { $graphics.Dispose() }
         if ($bitmap) { $bitmap.Dispose() }
@@ -1011,11 +1030,11 @@ function Get-TargetDiagnostics {
         }
         return $diagnostic
     } catch {
-        $pid = if (Test-IntegerInRange $Session.target.pid 0 2147483647) {
+        $targetPid = if (Test-IntegerInRange $Session.target.pid 0 2147483647) {
             [int] $Session.target.pid
         } else { 0 }
         return [ordered]@{
-            pid = $pid
+            pid = $targetPid
             window_found = $false
             foreground = $false
             visible = $false
@@ -1094,6 +1113,11 @@ if (-not $SessionPath -or -not $CommandPath -or -not $ArtifactDirectory) {
     throw 'SessionPath, CommandPath, and ArtifactDirectory are required.'
 }
 
+# Physical-pixel geometry, screenshots and SendInput must share one thread
+# context. This affects only this short-lived driver, not display settings.
+$previousDpiContext = [EvidenceNative]::SetThreadDpiAwarenessContext([IntPtr]::new(-4))
+if ($previousDpiContext -eq [IntPtr]::Zero) { throw 'physical-pixel thread context unavailable' }
+try {
 $started = [DateTimeOffset]::UtcNow
 $stopwatch = [Diagnostics.Stopwatch]::StartNew()
 $session = $null
@@ -1190,3 +1214,8 @@ $result = [ordered]@{
 }
 if ($null -ne $observation) { $result.observation = $observation }
 Write-InteractionResult $ResultPath $result $ArtifactDirectory
+} finally {
+    if ([EvidenceNative]::SetThreadDpiAwarenessContext($previousDpiContext) -eq [IntPtr]::Zero) {
+        throw 'physical-pixel thread context restore failed'
+    }
+}

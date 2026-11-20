@@ -96,6 +96,8 @@ try {
         throw 'Schema contract tests failed.'
     }
     & (Join-Path $root 'tests\test-windows-interaction-install.ps1')
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $root 'tests\test-windows-interaction-target.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Windows target selector regression failed.' }
     Write-Output 'Windows contract tests passed.'
 } finally {
     if (Test-Path -LiteralPath $work) {
