@@ -6,7 +6,7 @@ umask 077
     echo "usage: $0 <session.json> <command.json> <artifact-root>" >&2
     exit 2
 }
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 app="$script_dir/FesTermVMEvidenceInteraction.app"
 driver="$app/Contents/MacOS/FesTermVMEvidenceInteraction"
 [ -x "$driver" ] && [ ! -L "$app" ] && [ ! -L "$driver" ] || {
@@ -34,6 +34,7 @@ cp "$2" "$work/command.json"
 chmod 600 "$work/session.json" "$work/command.json" "$work/result.json" "$work/error.log"
 uid=$(id -u)
 open_pid=
+open_birth=
 # ps output is never emitted: only the exact helper executable's public argv is
 # inspected, and a unique private session path distinguishes this invocation.
 helper_rows() {
@@ -60,6 +61,13 @@ remember_children() {
         fi
     done
 }
+open_identity() {
+    [ "$(/bin/ps -p "$open_pid" -o uid= | tr -d ' ')" = "$uid" ] || return 1
+    [ "$(/bin/ps -ww -p "$open_pid" -o comm=)" = /usr/bin/open ] || return 1
+    expected_open="/usr/bin/open -n -g -W --stdin $work/command.json --stdout $work/result.json --stderr $work/error.log -a $app --args --session $work/session.json --artifact-root $artifact_root"
+    [ "$(/bin/ps -ww -p "$open_pid" -o command=)" = "$expected_open" ] || return 1
+    /bin/ps -p "$open_pid" -o lstart=
+}
 cleanup() {
     status=$?
     trap - EXIT HUP INT TERM
@@ -74,24 +82,42 @@ cleanup() {
     done
     # A LaunchServices child is outside open's process group. Its absence, not
     # merely open's exit, is the cleanup condition. Never kill a reused PID.
-    cleanup_deadline=$(( $(date +%s) + 3 ))
+    polls=30
     while :; do
         remaining=$(helper_rows)
         [ -z "$remaining" ] && break
-        [ "$(date +%s)" -lt "$cleanup_deadline" ] || break
+        [ "$polls" -gt 0 ] || break
+        polls=$((polls - 1))
         sleep 0.1
     done
-    if [ -n "$open_pid" ]; then
-        kill -TERM "$open_pid" 2>/dev/null || :
-        open_deadline=$(( $(date +%s) + 1 ))
-        while kill -0 "$open_pid" 2>/dev/null && [ "$(date +%s)" -lt "$open_deadline" ]; do
-            sleep 0.1
-        done
-        # This is our unreaped direct child, so its PID cannot have been reused.
-        kill -KILL "$open_pid" 2>/dev/null || :
+    open_unresolved=false
+    if [ -n "$open_pid" ] && kill -0 "$open_pid" 2>/dev/null; then
+        current_open_birth=$(open_identity) || current_open_birth=
+        if [ -n "$open_birth" ] && [ "$current_open_birth" = "$open_birth" ]; then
+            kill -TERM "$open_pid" 2>/dev/null || :
+            polls=10
+            while kill -0 "$open_pid" 2>/dev/null && [ "$polls" -gt 0 ]; do
+                polls=$((polls - 1))
+                sleep 0.1
+            done
+            if kill -0 "$open_pid" 2>/dev/null; then
+                current_open_birth=$(open_identity) || current_open_birth=
+                if [ "$current_open_birth" = "$open_birth" ]; then
+                    kill -KILL "$open_pid" 2>/dev/null || :
+                else
+                    open_unresolved=true
+                fi
+            fi
+        else
+            # A shell may already have reaped open and cached its wait status;
+            # $! alone never authorizes killing a possibly reused PID.
+            open_unresolved=true
+        fi
+    fi
+    if [ -n "$open_pid" ] && [ "$open_unresolved" = false ]; then
         wait "$open_pid" 2>/dev/null || :
     fi
-    if [ -n "${remaining:-}" ]; then
+    if [ -n "${remaining:-}" ] || [ "$open_unresolved" = true ]; then
         echo "macOS interaction helper cleanup could not verify absence; private evidence retained" >&2
         exit 125
     fi
@@ -118,15 +144,23 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 /usr/bin/open -n -g -W --stdin "$work/command.json" \
     --stdout "$work/result.json" --stderr "$work/error.log" -a "$app" \
-    --args --session "$work/session.json" --artifact-root "$artifact_root" &
+    --args --session "$work/session.json" --artifact-root "$artifact_root" \
+    >"$work/open.stdout" 2>"$work/open.stderr" &
 open_pid=$!
+open_birth=$(open_identity) || open_birth=
+# Wall time is an early cutoff; finite poll counts also bound backward jumps.
+launch_polls=$(( ((timeout_ms + 999) / 1000 + 5) * 10 ))
 deadline=$(( $(date +%s) + (timeout_ms + 999) / 1000 + 5 ))
 while kill -0 "$open_pid" 2>/dev/null; do
     remember_children
-    if [ "$(date +%s)" -ge "$deadline" ]; then
+    if [ -z "$open_birth" ]; then
+        open_birth=$(open_identity) || open_birth=
+    fi
+    if [ "$launch_polls" -le 0 ] || [ "$(date +%s)" -ge "$deadline" ]; then
         echo "macOS interaction LaunchServices command exceeded its deadline" >&2
         exit 124
     fi
+    launch_polls=$((launch_polls - 1))
     sleep 0.1
 done
 open_status=0

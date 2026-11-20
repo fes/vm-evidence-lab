@@ -551,6 +551,7 @@ run_interaction() (
     vm_evidence_acquire_lock "$lock_path"
     remote_session=
     remote_command=
+    # shellcheck disable=SC2329
     cleanup_interaction_request() {
         set +e
         if [ -n "$remote_session" ] && [ -n "$remote_command" ]; then
@@ -694,7 +695,7 @@ run_interaction() (
         scp_path=$path
         if [ "$platform" = windows ]; then
             # OpenSSH's remote path uses forward slashes; validate native paths above.
-            scp_path=$(printf '%s' "$path" | tr '\\' '/')
+            scp_path=$(printf '%s' "$path" | sed 's,\\,/,g')
         fi
         guest_scp_from "$platform" "$scp_path" "$local_artifact"
         "$python_command" - "$local_artifact" "$size" "$digest" <<'PY'

@@ -1,6 +1,10 @@
 [CmdletBinding()]
-param([string] $DriverPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'interaction\windows\driver.ps1'))
+param([string] $DriverPath)
 $ErrorActionPreference = 'Stop'
+if (-not $DriverPath) {
+    $repositoryRoot = Split-Path -Parent $PSScriptRoot
+    $DriverPath = Join-Path $repositoryRoot 'interaction\windows\driver.ps1'
+}
 # Exercise the production selector with deterministic native metadata, without
 # querying a desktop, focusing a window, or sending input.
 Add-Type -TypeDefinition @'

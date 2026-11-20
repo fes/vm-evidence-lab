@@ -37,6 +37,18 @@ def alive(pid):
 if op=='codesign':sys.exit(0)
 if op=='plutil':print(100);sys.exit(0)
 if op=='ps':
+ opened=root/'open.json'
+ if '-p' in args and opened.exists():
+  launched=json.loads(opened.read_text())
+  if args[args.index('-p')+1]==str(launched['pid']):
+   if not alive(launched['pid']):sys.exit(0)
+   if 'uid=' in args:print(os.getuid())
+   elif 'comm=' in args:print('/usr/bin/open')
+   elif 'command=' in args:print(launched['argv'])
+   elif 'lstart=' in args:
+    reads=root/'open-birth-reads';n=int(reads.read_text())if reads.exists()else 0;reads.write_text(str(n+1))
+    print('replacement open lifetime' if os.environ['FIXTURE_MODE']=='open-changed-birth' and n>0 else 'original open lifetime')
+   sys.exit(0)
  state=root/'child.json'
  if os.environ['FIXTURE_MODE']=='existing' and not state.exists():
   if args==['-ww','-axo','pid=,comm=']:print('987654 '+os.environ['FIXTURE_EXE'])
@@ -53,6 +65,7 @@ if op=='ps':
   print('replacement lifetime' if os.environ['FIXTURE_MODE']=='changed-birth' and n>0 else 'original lifetime')
  sys.exit(0)
 if op=='open':
+ (root/'open.json').write_text(json.dumps({'pid':os.getpid(),'argv':' '.join(['/usr/bin/open']+args)}))
  assert args[:3]==['-n','-g','-W']
  def value(flag):return args[args.index(flag)+1]
  session=pathlib.Path(args[args.index('--session')+1]);command=pathlib.Path(value('--stdin'));output=pathlib.Path(value('--stdout'));error=pathlib.Path(value('--stderr'))
@@ -69,13 +82,14 @@ if op=='open':
  def reap(*unused):
   child.poll();sys.exit(0)
  signal.signal(signal.SIGTERM,reap)
- while child.poll()is None:time.sleep(.02)
+ while child.poll()is None or os.environ['FIXTURE_MODE']=='open-changed-birth':time.sleep(.02)
  sys.exit(0)
 ''')
         fixture.chmod(0o700)
         source = (ROOT / "interaction/macos/driver-command.sh").read_text()
-        for command in ("codesign", "plutil", "open"):
+        for command in ("codesign", "plutil"):
             source = source.replace("/usr/bin/" + command, '"' + str(fixture) + '" ' + command)
+        source = source.replace("\n/usr/bin/open ", '\n"' + str(fixture) + '" open ')
         source = source.replace("/bin/ps", '"' + str(fixture) + '" ps')
         wrapper = install / "driver-command.sh"
         wrapper.write_text(source)
@@ -94,6 +108,9 @@ if op=='open':
                                     env=env, capture_output=True, timeout=16)
             state = root / "child.json"
             child = json.loads(state.read_text())["pid"] if state.exists() else None
+            if mode == "open-changed-birth":
+                opened = json.loads((root / "open.json").read_text())["pid"]
+                os.kill(opened, 0)  # Different open lifetime was never killed.
             if mode == "changed-birth":
                 self.assertIsNotNone(child)
                 os.kill(child, 0)  # The replacement lifetime was never terminated.
@@ -102,6 +119,12 @@ if op=='open':
                     os.kill(child, 0)
             return result, root
         finally:
+            opened = root / "open.json"
+            if opened.exists():
+                try:
+                    os.kill(json.loads(opened.read_text())["pid"], 15)
+                except ProcessLookupError:
+                    pass
             state = root / "child.json"
             if state.exists():
                 try:
@@ -134,6 +157,11 @@ if op=='open':
         result, root = self.run_wrapper("timeout")
         self.assertEqual(result.returncode, 124, result.stderr)
         self.assertFalse(list(root.glob("vm-evidence-interaction.*")))
+
+    def test_changed_open_birth_is_not_killed(self):
+        result, root = self.run_wrapper("open-changed-birth")
+        self.assertEqual(result.returncode, 125, result.stderr)
+        self.assertEqual(len(list(root.glob("vm-evidence-interaction.*"))), 1)
 
     def test_changed_birth_is_not_killed_and_evidence_retained(self):
         result, root = self.run_wrapper("changed-birth")
