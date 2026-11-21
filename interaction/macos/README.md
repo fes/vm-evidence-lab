@@ -68,8 +68,10 @@ Only the `capabilities`, `observe`, `focus`, `key`, `text`, `move`, `click`,
 `double-click`, `drag`, `scroll`, `wait`, `screenshot`, and
 `clipboard-set-sentinel` operations perform work. `video-start` and
 `video-stop` always return a structured `unsupported` result with an
-explanation. `--self-test` checks only local codecs/key mappings and neither
-posts events nor inspects another application.
+explanation. `--self-test` checks local codecs/key mappings and constructs native
+key-event sequences; it neither posts events nor inspects another application.
+A key `press` applies the requested modifiers to key-down and releases them on
+key-up. Explicit `down` and `up` phases retain their requested modifier flags.
 
 ## Limitations
 

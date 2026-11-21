@@ -56,10 +56,6 @@ final class InteractionDriver {
         var artifacts: [ArtifactResult] = []
         var nativeError: String?
 
-        defer {
-            // Flags are applied directly to input events, so no modifier keys are left down.
-        }
-
         do {
             guard command.session_id == session.session_id else {
                 throw DriverError.denied("Command session identifier does not match the session")
@@ -207,6 +203,23 @@ final class InteractionDriver {
               keyCode("0-9", character: "7") == 26,
               sha256(Data("sentinel".utf8)).count == 64 else {
             throw DriverError.native("self-test assertion failed")
+        }
+        // Exercise the same event construction as sendKey, without posting input.
+        for modifiers in [[], ["command"], ["meta"], ["shift"], ["control"], ["alt"],
+                          ["command", "shift", "control", "alt"]] as [[String]] {
+            let flags = modifierFlags(modifiers)
+            let press = try keyEvents(code: 12, modifiers: modifiers, phase: "press")
+            guard press.count == 2, press[0].type == .keyDown, press[0].flags == flags,
+                  press[1].type == .keyUp, press[1].flags.isEmpty,
+                  press.allSatisfy({ $0.getIntegerValueField(.keyboardEventKeycode) == 12 }) else {
+                throw DriverError.native("transient key modifier release self-test failed")
+            }
+            for (phase, type) in [("down", CGEventType.keyDown), ("up", CGEventType.keyUp)] {
+                let events = try keyEvents(code: 12, modifiers: modifiers, phase: phase)
+                guard events.count == 1, events[0].type == type, events[0].flags == flags else {
+                    throw DriverError.native("explicit key phase self-test failed")
+                }
+            }
         }
         return ["driver": "macos-gui-driver/1", "status": "pass", "posted_input": false,
                 "inspected_applications": false]
@@ -473,21 +486,29 @@ final class InteractionDriver {
         guard let code = keyCode(request.name, character: request.character) else {
             throw DriverError.invalid("Key requires a character valid for its declared name")
         }
-        let modifiers = modifierFlags(request.modifiers ?? [])
-        let phase = request.phase ?? "press"
-        if phase == "up" {
-            postKey(code: code, down: false, flags: modifiers)
-            return
+        for event in try keyEvents(code: code, modifiers: request.modifiers ?? [],
+                               phase: request.phase ?? "press") {
+            event.post(tap: .cghidEventTap)
         }
-        postKey(code: code, down: true, flags: modifiers)
-        if phase == "press" { postKey(code: code, down: false, flags: modifiers) }
     }
 
-    private func postKey(code: CGKeyCode, down: Bool, flags: CGEventFlags) {
-        let source = CGEventSource(stateID: .hidSystemState)
-        if let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) {
+    private func keyEvents(code: CGKeyCode, modifiers: [String], phase: String) throws -> [CGEvent] {
+        let flags = modifierFlags(modifiers)
+        let strokes: [(Bool, CGEventFlags)]
+        switch phase {
+        case "up": strokes = [(false, flags)]
+        // A press owns its modifiers only until this key is released.
+        case "press": strokes = [(true, flags), (false, [])]
+        default: strokes = [(true, flags)]
+        }
+        return try strokes.map { down, flags in
+            let source = CGEventSource(stateID: .hidSystemState)
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: code,
+                                      keyDown: down) else {
+                throw DriverError.native("Could not construct key event sequence")
+            }
             event.flags = flags
-            event.post(tap: .cghidEventTap)
+            return event
         }
     }
 
