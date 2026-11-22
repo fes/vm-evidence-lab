@@ -90,6 +90,33 @@ class InteractionValidationTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             validate_command(request, validate_session(session()))
 
+    def test_macos_scroll_accepts_bounded_point_with_only_existing_wheel_grant(self):
+        for space in ("physical-screen", "target-relative"):
+            request = command(operation="scroll", scroll={"delta_x": 0, "delta_y": -3, "unit": "line"},
+                              point={"x": 10, "y": 20, "coordinate_space": space})
+            owned = validate_session(session(platform="macos", grants=["wheel"]))
+            self.assertEqual(validate_command(request, owned), request)
+        for point in ({"x": -1, "y": 20}, {"x": 100001, "y": 20},
+                      {"x": 10, "y": True}, {"x": 10, "y": 20, "coordinate_space": "unbounded"}):
+            request["point"] = point
+            with self.assertRaises(ValidationError):
+                validate_command(request, owned)
+        request["point"] = {"x": 10, "y": 20}
+        with self.assertRaises(ValidationError):
+            validate_command(request, validate_session(session(platform="macos", grants=["pointer"])))
+        for field, payload in (("destination", {"x": 1, "y": 2}), ("button", "primary"), ("duration_ms", 5)):
+            with self.assertRaises(ValidationError):
+                validate_command({**request, field: payload}, owned)
+
+    def test_scroll_point_requires_an_explicit_supported_platform_session(self):
+        request = command(operation="scroll", scroll={"delta_x": 0, "delta_y": 1, "unit": "line"},
+                          point={"x": 10, "y": 20})
+        for platform in ("linux", "windows"):
+            with self.assertRaises(ValidationError):
+                validate_command(request, validate_session(session(platform=platform)))
+        with self.assertRaises(ValidationError):
+            validate_command(request)
+
     def test_operation_rejects_unrelated_fields(self):
         request = command(operation="observe", scroll={
             "delta_x": 0,
@@ -165,6 +192,37 @@ class InteractionControllerTests(unittest.TestCase):
         }))
         self.assertEqual(len(controller.transport.commands), 1)
         self.assertIn("dry-run", response["diagnostics"]["message"])
+
+    def test_macos_scroll_point_reaches_dry_run_transport_unchanged(self):
+        controller = dry_run_controller(session(platform="macos", grants=["wheel"]))
+        request = command(operation="scroll", scroll={"delta_x": 0, "delta_y": 1, "unit": "pixel"},
+                          point={"x": 10, "y": 20, "coordinate_space": "target-relative"})
+        response = controller.execute(request)
+        self.assertEqual(controller.transport.commands, [request])
+        self.assertEqual(response["diagnostics"]["platform"], "macos")
+        self.assertIn("dry-run", response["diagnostics"]["message"])
+
+    def test_actual_cli_scroll_point_uses_session_in_every_command_entry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = pathlib.Path(folder)
+            session_file = folder / "session.json"
+            command_file = folder / "command.json"
+            result_file = folder / "result.json"
+            request = command(operation="scroll", scroll={"delta_x": 0, "delta_y": 1, "unit": "line"},
+                              point={"x": 10, "y": 20})
+            command_file.write_text(json.dumps(request), encoding="utf-8")
+            for platform, grants, expected in (("macos", ["wheel"], 0), ("linux", ["wheel"], 2),
+                                                ("windows", ["wheel"], 2), ("macos", ["pointer"], 2)):
+                session_file.write_text(json.dumps(session(platform=platform, grants=grants)), encoding="utf-8")
+                response = result(request)
+                response["diagnostics"]["platform"] = platform
+                result_file.write_text(json.dumps(response), encoding="utf-8")
+                for mode in (["--validate-request"], ["--dry-run"], ["--validate-result", str(result_file)]):
+                    with self.subTest(platform=platform, grants=grants, mode=mode):
+                        completed = subprocess.run([sys.executable, str(ROOT / "host/interactive.py"),
+                            "--session", str(session_file), "--command", str(command_file), *mode],
+                            text=True, capture_output=True, timeout=5)
+                        self.assertEqual(completed.returncode, expected, completed.stderr)
 
     def test_trusted_argv_transport_rejects_nonsuccess_and_timeout(self):
         executable = sys.executable

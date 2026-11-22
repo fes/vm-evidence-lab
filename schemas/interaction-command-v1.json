@@ -84,6 +84,7 @@
       }
     },
     "point": {
+      "description": "Pointer location. For scroll, accepted only with a macOS session; Linux and Windows scroll at the current owned cursor.",
       "$ref": "#/$defs/point"
     },
     "destination": {

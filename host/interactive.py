@@ -47,16 +47,16 @@ def main() -> int:
     if not arguments.session or not arguments.command:
         parser.error("--session and --command are required")
     try:
-        session = _read(arguments.session)
+        session = validate_session(_read(arguments.session))
         command = _read(arguments.command)
         if arguments.validate_result:
             result = validate_result(
                 _read(arguments.validate_result),
-                validate_session(session),
-                validate_command(command),
+                session,
+                validate_command(command, session),
             )
         elif arguments.validate_request:
-            validate_command(command, validate_session(session))
+            validate_command(command, session)
             return 0
         elif arguments.dry_run:
             controller = dry_run_controller(session)
