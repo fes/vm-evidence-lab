@@ -96,6 +96,9 @@ try {
         throw 'Schema contract tests failed.'
     }
     & (Join-Path $root 'tests\test-windows-interaction-install.ps1')
+    # Compile the actual embedded native boundary without querying a desktop.
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $root 'interaction\windows\driver.ps1') -SelfTest
+    if ($LASTEXITCODE -ne 0) { throw 'Windows driver compilation/self-test failed.' }
     & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $root 'tests\test-windows-interaction-target.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'Windows target selector regression failed.' }
     Write-Output 'Windows contract tests passed.'

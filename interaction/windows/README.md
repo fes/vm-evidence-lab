@@ -39,3 +39,17 @@ its zero-based `window_index`. Modifier keys are explicitly released in
 No VM is started or stopped by the driver. Native GUI behavior can only be
 validated in an actual logged-in Windows desktop; this repository check
 does not exercise it.
+
+`observe` also returns optional `cursor` metadata. An available snapshot means
+that the displayed global cursor was sampled while the retained selected process,
+foreground window, rectangle, pointer position and native point ownership matched
+at the before/after checks. The exact snapshot point and the final pointer point
+are each checked against the owned rectangle and native point PID/root, including
+foreign child-window refusal. This is a snapshot, not an atomic continuity proof. Shape is one of `arrow`, `size_we`, `size_ns`,
+`size_nwse`, `size_nesw` or `other`, compared with borrowed stock cursor handles.
+Off-target/background, hidden/suppressed, changed or failed observations return
+`available: false` and `shape: unknown`; a failed native sample may include only
+its numeric error code. Unavailable snapshots omit coordinates and never fail
+ordinary window observation. No handle is exported and no cursor is installed.
+A resize hit-test or successful pointer movement is not cursor-shape evidence;
+actual native hover qualification remains separate from the contract fixtures.

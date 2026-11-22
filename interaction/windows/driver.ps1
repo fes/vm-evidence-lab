@@ -43,6 +43,11 @@ public static class EvidenceNative {
     [StructLayout(LayoutKind.Sequential)] public struct POINT {
         public int X, Y;
     }
+    [StructLayout(LayoutKind.Sequential)] struct CURSORINFO {
+        public uint Size, Flags;
+        public IntPtr Cursor;
+        public POINT Position;
+    }
     [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT {
         public int dx, dy;
         public uint mouseData, dwFlags, time;
@@ -86,6 +91,10 @@ public static class EvidenceNative {
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern bool GetCursorInfo(ref CURSORINFO info);
+    [DllImport("user32.dll", EntryPoint = "LoadCursorW", SetLastError = true)]
+    static extern IntPtr LoadCursor(IntPtr instance, IntPtr name);
     [DllImport("user32.dll", SetLastError = true)]
     static extern uint SendInput(uint count, INPUT[] inputs, int size);
 
@@ -175,6 +184,44 @@ public static class EvidenceNative {
         x = point.X;
         y = point.Y;
         return ok;
+    }
+    public static string ClassifyCursor(IntPtr cursor, IntPtr arrow, IntPtr horizontal,
+            IntPtr vertical, IntPtr northwest, IntPtr northeast) {
+        if (cursor == IntPtr.Zero || arrow == IntPtr.Zero || horizontal == IntPtr.Zero ||
+                vertical == IntPtr.Zero || northwest == IntPtr.Zero || northeast == IntPtr.Zero)
+            return "unknown";
+        if (cursor == arrow) return "arrow";
+        if (cursor == horizontal) return "size_we";
+        if (cursor == vertical) return "size_ns";
+        if (cursor == northwest) return "size_nwse";
+        if (cursor == northeast) return "size_nesw";
+        return "other";
+    }
+    public static bool CursorSnapshot(out int x, out int y, out bool showing,
+            out string shape, out int error) {
+        CURSORINFO info = new CURSORINFO();
+        info.Size = (uint)Marshal.SizeOf(typeof(CURSORINFO));
+        x = y = error = 0; showing = false; shape = "unknown";
+        if (!GetCursorInfo(ref info)) {
+            error = Marshal.GetLastWin32Error();
+            return false;
+        }
+        x = info.Position.X; y = info.Position.Y;
+        showing = (info.Flags & 1u) != 0 && (info.Flags & 2u) == 0;
+        if (showing) {
+            // Shared system cursors are borrowed, never destroyed or installed.
+            int[] ids = new int[] { 32512, 32644, 32645, 32642, 32643 };
+            IntPtr[] stock = new IntPtr[ids.Length];
+            for (int i = 0; i < ids.Length; i++) {
+                stock[i] = LoadCursor(IntPtr.Zero, new IntPtr(ids[i]));
+                if (stock[i] == IntPtr.Zero) {
+                    error = Marshal.GetLastWin32Error();
+                    return false;
+                }
+            }
+            shape = ClassifyCursor(info.Cursor, stock[0], stock[1], stock[2], stock[3], stock[4]);
+        }
+        return true;
     }
     public static IntPtr HitWindow(int x, int y) {
         IntPtr hit = WindowFromPoint(new POINT { X = x, Y = y });
@@ -579,6 +626,67 @@ function Assert-CursorOwned {
     }
 }
 
+function Test-ObservedCursorPoint {
+    param([int] $X, [int] $Y, [object] $State, [object] $Session)
+    return $X -ge $State.Rect.Left -and $Y -ge $State.Rect.Top -and
+        $X -lt $State.Rect.Right -and $Y -lt $State.Rect.Bottom -and
+        [EvidenceNative]::HitOwnedWindow($X, $Y, [int] $Session.target.pid, $State.Handle)
+}
+
+function Get-CursorObservation {
+    param([object] $State, [object] $Session)
+    $result = [ordered]@{ available = $false; shape = 'unknown'; native_error_code = $null }
+    $process = $null
+    try {
+        # Cursor observation is optional. Ordinary observe remains usable when
+        # background/off-target; never disclose another window's cursor state.
+        $process = [EvidenceNative]::RetainProcess([int] $Session.target.pid)
+        $before = Get-TargetState $Session
+        Assert-Target $before -Visible -Foreground
+        if ($process.HasExited -or $before.Handle -ne $State.Handle) { return $result }
+        $beforeX = 0; $beforeY = 0
+        if (-not [EvidenceNative]::Cursor([ref] $beforeX, [ref] $beforeY) -or
+            -not (Test-ObservedCursorPoint $beforeX $beforeY $before $Session)) { return $result }
+        $x = 0; $y = 0; $showing = $false; $shape = 'unknown'; $nativeCode = 0
+        if (-not [EvidenceNative]::CursorSnapshot(
+                [ref] $x, [ref] $y, [ref] $showing, [ref] $shape, [ref] $nativeCode)) {
+            $result.native_error_code = $nativeCode
+            return $result
+        }
+        if (-not $showing -or @('arrow', 'size_we', 'size_ns', 'size_nwse', 'size_nesw', 'other') -notcontains $shape) {
+            return $result
+        }
+        # Validate the exact GetCursorInfo position, not a later separately
+        # sampled position that could move away and back between the checks.
+        if (-not (Test-ObservedCursorPoint $x $y $before $Session)) { return $result }
+        $after = Get-TargetState $Session
+        Assert-Target $after -Visible -Foreground
+        if ($process.HasExited -or $after.Handle -ne $before.Handle -or
+            $after.Rect.Left -ne $before.Rect.Left -or $after.Rect.Top -ne $before.Rect.Top -or
+            $after.Rect.Right -ne $before.Rect.Right -or $after.Rect.Bottom -ne $before.Rect.Bottom) {
+            return $result
+        }
+        if (-not (Test-ObservedCursorPoint $x $y $after $Session)) { return $result }
+        $currentX = 0; $currentY = 0
+        if (-not [EvidenceNative]::Cursor([ref] $currentX, [ref] $currentY) -or
+            $currentX -ne $x -or $currentY -ne $y -or
+            -not (Test-ObservedCursorPoint $currentX $currentY $after $Session)) { return $result }
+        $result.available = $true
+        $result.shape = $shape
+        $result['x'] = $x; $result['y'] = $y
+        return $result
+    } catch {
+        return $result # No source error text, handle, or off-target coordinates.
+    } finally {
+        if ($null -ne $process) {
+            try { $process.Dispose() } catch {
+                $result.available = $false; $result.shape = 'unknown'
+                $result.Remove('x'); $result.Remove('y')
+            }
+        }
+    }
+}
+
 function Get-Observation {
     param([object] $State, [object] $Session)
     Assert-Target $State
@@ -586,6 +694,7 @@ function Get-Observation {
         window_id = ('0x{0:x}' -f $State.Handle.ToInt64())
         title = [EvidenceNative]::Title($State.Handle)
         accessibility = $null
+        cursor = Get-CursorObservation $State $Session
     }
     if ($Session.grants -contains 'accessibility') {
         try {
