@@ -80,6 +80,24 @@ def result(request, *, status="pass"):
 
 
 class InteractionValidationTests(unittest.TestCase):
+    def test_windows_optional_cursor_metadata_uses_existing_observe_contract(self):
+        owned = validate_session(session(platform="windows", grants=["observe"]))
+        request = command(operation="observe")
+        validate_command(request, owned)
+        for cursor in (
+            {"available": True, "shape": "size_we", "x": 10, "y": 20,
+             "native_error_code": None},
+            {"available": False, "shape": "unknown", "native_error_code": 5},
+            {"available": False, "shape": "unknown", "native_error_code": None},
+        ):
+            document = result(request)
+            document["diagnostics"]["platform"] = "windows"
+            document["observation"] = {"window_id": "0x2", "cursor": cursor}
+            validate_result(document, owned, request)
+            self.assertEqual(document["status"], "pass")
+        with self.assertRaises(ValidationError):
+            validate_command(command(operation="move", point={"x": 10, "y": 20}), owned)
+
     def test_scroll_is_bounded_wheel_operation(self):
         request = command(
             operation="scroll",

@@ -14,19 +14,43 @@ public static class EvidenceNative {
  public static int Mode = 0;
  public static int ClickCase, DownCount, UpCount, FocusCalls, MovementOnly, LastUpFlags;
  public static int CursorX,CursorY;
+ public static int CursorCase, SnapshotCalls, CursorReads;
+ public static string CursorShape = "arrow";
+ public static bool CursorSnapshot(out int x,out int y,out bool showing,out string shape,out int error) {
+  SnapshotCalls++; x=CursorX; y=CursorY; showing=CursorCase!=2; shape=CursorShape; error=0;
+  if(CursorCase==1) {error=5;return false;}
+  if(CursorCase==3) Hit=new IntPtr(99);
+  if(CursorCase==4) CursorX++;
+  if(CursorCase==5) Background=true;
+  if(CursorCase==6) Exited=true;
+  if(CursorCase==7) OwnerPid=456;
+  if(CursorCase==8) Mode=3;
+  if(CursorCase==9) DisposeFails=true;
+  if(CursorCase==10) x=500;
+  if(CursorCase==11) x=50;
+  if(CursorCase==12) ForeignChild=true;
+  return true;
+ }
+
  public static int OwnerPid = 123;
- public static bool Background, ForeignChild, Exited, Disposed;
+ public static bool Background, ForeignChild, Exited, Disposed, DisposeFails;
  public static IntPtr Hit = new IntPtr(2);
  public class Lifetime : IDisposable {
   public int Id { get { return 123; } }
   public bool HasExited { get { return Exited; } }
-  public void Dispose() { Disposed=true; }
+  public void Dispose() { Disposed=true; if(DisposeFails) throw new InvalidOperationException("private disposal source"); }
  }
  public static Lifetime RetainProcess(int pid) { if(pid!=123) throw new InvalidOperationException("wrong lifetime"); return new Lifetime(); }
  public static bool Focus(IntPtr h) { FocusCalls++; return false; }
  public static IntPtr HitWindow(int x,int y) { return Hit; }
- public static bool Cursor(out int x,out int y) { x=CursorX;y=CursorY;return true; }
- public static bool HitOwnedWindow(int x,int y,int pid,IntPtr root) { return Hit==root && !ForeignChild && OwnerPid==pid; }
+ public static string Title(IntPtr h) { return "Owned fixture"; }
+ public static bool Cursor(out int x,out int y) {
+  CursorReads++;x=CursorX;y=CursorY;
+  if(CursorReads>=3 && CursorCase==10) x=500;
+  if(CursorReads>=3 && CursorCase==11) x=50;
+  return true;
+ }
+ public static bool HitOwnedWindow(int x,int y,int pid,IntPtr root) { return Hit==root && !ForeignChild && OwnerPid==pid && !(CursorCase==11 && x==50); }
  public static void Pointer(int x,int y,uint flags,uint data) {
   if(flags==0) MovementOnly++;
   if(flags==2 || flags==8) {
@@ -46,7 +70,7 @@ public static class EvidenceNative {
   if(ClickCase==7 || ClickCase==8) throw new InvalidOperationException("simulated release failure");
  }
  public static void ReleaseModifiers() {}
- public static void Reset() { Mode=0;ClickCase=0;DownCount=0;UpCount=0;FocusCalls=0;MovementOnly=0;LastUpFlags=0;OwnerPid=123;Background=true;ForeignChild=false;Exited=false;Disposed=false;Hit=new IntPtr(2);CursorX=0;CursorY=0; }
+ public static void Reset() { DisposeFails=false;CursorCase=0;SnapshotCalls=0;CursorReads=0;CursorShape="arrow";Mode=0;ClickCase=0;DownCount=0;UpCount=0;FocusCalls=0;MovementOnly=0;LastUpFlags=0;OwnerPid=123;Background=true;ForeignChild=false;Exited=false;Disposed=false;Hit=new IntPtr(2);CursorX=0;CursorY=0; }
 
  public static IntPtr[] WindowsForPid(int pid) { return Mode==3 ? new [] {new IntPtr(3)} : new [] {new IntPtr(1),new IntPtr(2),new IntPtr(3)}; }
  public static int WindowPid(IntPtr h) { return OwnerPid; }
@@ -201,3 +225,73 @@ if ([ReleaseBoundary]::Calls -ne 1 -or [ReleaseBoundary]::Flags -ne 4 -or
     throw 'Failure cleanup moved the pointer or sent extra input'
 }
 Write-Output 'Windows button-only release boundary regression passed.'
+
+
+# Optional cursor metadata uses the actual observation functions and retained
+# process guard, with native sampling replaced by deterministic counters only.
+foreach ($name in @('Test-ObservedCursorPoint','Get-CursorObservation','Get-Observation')) {
+    $node=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+    if ($null -eq $node) { throw "Missing cursor production function $name" }
+    . ([ScriptBlock]::Create($node.Extent.Text))
+}
+$session=[pscustomobject]@{target=[pscustomobject]@{pid=123};grants=@('observe')}
+foreach ($shape in @('arrow','size_we','size_ns','size_nwse','size_nesw','other')) {
+    [EvidenceNative]::Reset();[EvidenceNative]::Background=$false
+    [EvidenceNative]::CursorShape=$shape
+    $state=Get-TargetState $session
+    $observation=Get-Observation $state $session
+    if (-not $observation.cursor.available -or $observation.cursor.shape -cne $shape -or
+        $observation.cursor.x -ne 0 -or $observation.cursor.y -ne 0 -or
+        [EvidenceNative]::SnapshotCalls -ne 1 -or -not [EvidenceNative]::Disposed -or
+        [EvidenceNative]::MovementOnly -ne 0 -or [EvidenceNative]::FocusCalls -ne 0 -or
+        [EvidenceNative]::DownCount -ne 0 -or [EvidenceNative]::UpCount -ne 0) {
+        throw "Owned cursor $shape observation changed input or lost its guard"
+    }
+}
+# Cases10/11 model an ABA pointer: pre/post current-cursor guards see owned0,
+# but GetCursorInfo and the final later cursor read expose an off-target500 or
+# foreign-child50 point. Exact snapshot-point validation must reject both.
+foreach ($caseNumber in @(1,2,3,4,5,6,7,8,9,10,11,12)) {
+    [EvidenceNative]::Reset();[EvidenceNative]::Background=$false
+    [EvidenceNative]::CursorCase=$caseNumber
+    $observation=Get-Observation (Get-TargetState $session) $session
+    if ($observation.cursor.available -or $observation.cursor.shape -cne 'unknown' -or
+        $observation.cursor.Contains('x') -or $observation.cursor.Contains('y') -or
+        -not [EvidenceNative]::Disposed) { throw "Unsafe cursor snapshot $caseNumber accepted" }
+    if ($caseNumber -eq 1 -and $observation.cursor.native_error_code -ne 5) {
+        throw 'Failed cursor API lost its finite numeric error'
+    }
+}
+foreach ($boundary in @('background','outside','foreign','foreign-child','unknown-shape')) {
+    [EvidenceNative]::Reset();[EvidenceNative]::Background=$false
+    if($boundary -eq 'background'){[EvidenceNative]::Background=$true}
+    if($boundary -eq 'outside'){[EvidenceNative]::CursorX=500}
+    if($boundary -eq 'foreign'){[EvidenceNative]::Hit=[IntPtr]::new(99)}
+    if($boundary -eq 'foreign-child'){[EvidenceNative]::ForeignChild=$true}
+    if($boundary -eq 'unknown-shape'){[EvidenceNative]::CursorShape='PRIVATE-UNRECOGNIZED'}
+    $observation=Get-Observation (Get-TargetState $session) $session
+    if ($observation.cursor.available -or $observation.cursor.shape -cne 'unknown' -or
+        $observation.cursor.Contains('x') -or $observation.cursor.Contains('y') -or
+        -not $observation.window_id -or -not [EvidenceNative]::Disposed) {
+        throw "Normal observe failed to retain unavailable cursor boundary $boundary"
+    }
+    if($boundary -ne 'unknown-shape' -and [EvidenceNative]::SnapshotCalls -ne 0) {
+        throw 'Off-target cursor was sampled'
+    }
+}
+
+# Compile and run the exact pure stock classifier from the embedded C# source.
+# Its inputs are synthetic handles; no OS cursor calls are executed here.
+$source=Get-Content -Raw -LiteralPath $DriverPath
+$method=[regex]::Match($source,'(?s)    public static string ClassifyCursor\(.*?\n    }').Value
+if (-not $method) {throw 'Missing production stock classifier'}
+Add-Type -TypeDefinition ("using System; public static class EvidenceCursorClassifier {`n"+$method+"`n}")
+$stock=@([IntPtr]::new(1),[IntPtr]::new(2),[IntPtr]::new(3),[IntPtr]::new(4),[IntPtr]::new(5))
+$expected=@('arrow','size_we','size_ns','size_nwse','size_nesw')
+for($i=0;$i -lt $stock.Count;$i++) {
+    if([EvidenceCursorClassifier]::ClassifyCursor($stock[$i],$stock[0],$stock[1],$stock[2],$stock[3],$stock[4]) -cne $expected[$i]) {throw 'Stock cursor classification mismatch'}
+}
+if([EvidenceCursorClassifier]::ClassifyCursor([IntPtr]::Zero,$stock[0],$stock[1],$stock[2],$stock[3],$stock[4]) -cne 'unknown' -or
+   [EvidenceCursorClassifier]::ClassifyCursor([IntPtr]::new(99),$stock[0],$stock[1],$stock[2],$stock[3],$stock[4]) -cne 'other' -or
+   [EvidenceCursorClassifier]::ClassifyCursor($stock[0],[IntPtr]::Zero,$stock[1],$stock[2],$stock[3],$stock[4]) -cne 'unknown') {throw 'Cursor unknown/other classification changed'}
+Write-Output 'Windows optional cursor observation passed (stock shapes, native error, off-target, hidden, lifetime and no-input guards).'
