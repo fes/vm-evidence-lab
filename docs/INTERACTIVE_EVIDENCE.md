@@ -76,10 +76,18 @@ command. `interaction-command-v1.json` then provides one bounded operation:
 
 - observation and waits;
 - focus, key, text, pointer, click, double-click and drag;
-- line- or pixel-unit wheel scrolling;
+- line- or pixel-unit wheel scrolling (optional point on macOS only);
 - owned-window or full-display screenshots;
 - controlled clipboard sentinels; and
 - bounded video start/stop.
+
+On macOS, `scroll` accepts an optional bounded `point` in the same coordinate
+spaces as pointer operations. The existing driver moves to that point before
+scrolling and verifies the selected target owns it; omitting it uses the target
+window's center. Linux and Windows scroll at the current owned cursor and reject
+a scroll point. Host validation therefore requires an explicit macOS session to
+accept this optional field. The wheel grant and native target/ownership checks
+remain unchanged.
 
 Every command is assigned a monotonically increasing sequence. The driver
 rejects missing, duplicate or out-of-order sequences. Artifact names are

@@ -50,7 +50,7 @@ OPERATION_FIELDS = {
     "click": {"point", "button", "duration_ms"},
     "double-click": {"point", "button", "duration_ms"},
     "drag": {"point", "destination", "button", "duration_ms"},
-    "scroll": {"scroll"},
+    "scroll": {"scroll", "point"},
     "wait": {"wait"},
     "screenshot": {"artifact"},
     "clipboard-set-sentinel": {"clipboard"},
@@ -322,6 +322,11 @@ def validate_command(value: Any, session: Optional[Mapping[str, Any]] = None) ->
     _integer(root["sequence"], "command.sequence", 1)
     _enum(root["operation"], "command.operation", OPERATIONS)
     _validate_operation_fields(root)
+    # Only the existing macOS driver implements point-directed wheel events.
+    # Never infer this platform capability during sessionless validation.
+    if operation == "scroll" and "point" in root and (
+            session is None or session.get("platform") != "macos"):
+        _fail("command.point", "scroll point requires an explicit macos session")
     if "key" in root:
         key = _object(root["key"], "command.key")
         _keys(key, "command.key", ("name",), ("character", "modifiers", "phase"))
