@@ -83,7 +83,7 @@ final class InteractionDriver {
                 observation = capabilityObservation()
                 message = "Capabilities reported"
             case "observe":
-                observation = observationForTarget()
+                observation = observationForTarget(cursor: command.cursor == true)
                 message = "Target observed"
             case "focus":
                 try focus()
@@ -204,6 +204,29 @@ final class InteractionDriver {
               sha256(Data("sentinel".utf8)).count == 64 else {
             throw DriverError.native("self-test assertion failed")
         }
+        guard Self.cursorBounds(128, 128, 65536, CGPoint(x: 127, y: 127)),
+              !Self.cursorBounds(129, 1, 516, .zero),
+              !Self.cursorBounds(1, 1, 65537, .zero),
+              !Self.cursorBounds(1, 1, 4, CGPoint(x: 1, y: 0)),
+              !Self.cursorBounds(1, 1, 4, CGPoint(x: CGFloat.nan, y: 0)) else {
+            throw DriverError.native("cursor bounds self-test failed")
+        }
+        guard Self.cursorStorage(width: 128, height: 128, row: 512,
+                                 plane: 65536, planes: 1, planar: false) == 65536,
+              Self.cursorStorage(width: 1, height: 1, row: 4,
+                                 plane: 4, planes: 1, planar: true) == nil,
+              Self.cursorStorage(width: 1, height: 1, row: 4,
+                                 plane: 4, planes: 4, planar: false) == nil,
+              Self.cursorStorage(width: 1, height: 1, row: 4,
+                                 plane: 65537, planes: 1, planar: false) == nil else {
+            throw DriverError.native("cursor plane storage self-test failed")
+        }
+        let binding = CursorBinding(id: 1, bounds: CGRect(x: 0, y: 0, width: 10, height: 10),
+                                    point: CGPoint(x: 2, y: 2))
+        guard binding != CursorBinding(id: 2, bounds: binding.bounds, point: binding.point),
+              binding != CursorBinding(id: 1, bounds: binding.bounds, point: .zero) else {
+            throw DriverError.native("cursor ownership comparison self-test failed")
+        }
         // Exercise the same event construction as sendKey, without posting input.
         for modifiers in [[], ["command"], ["meta"], ["shift"], ["control"], ["alt"],
                           ["command", "shift", "control", "alt"]] as [[String]] {
@@ -253,6 +276,9 @@ final class InteractionDriver {
         if ["video-start", "video-stop"].contains(command.operation) { allowed.insert("video") }
         if ["click", "double-click", "drag"].contains(command.operation) {
             allowed.formUnion(["button", "duration_ms"])
+        }
+        if command.cursor != nil && command.operation != "observe" {
+            throw DriverError.invalid("cursor is only valid for observe")
         }
         let forbidden = Set(["key", "text", "point", "destination", "button", "duration_ms",
                              "scroll", "wait", "artifact", "clipboard", "video"]).subtracting(allowed)
@@ -319,9 +345,9 @@ final class InteractionDriver {
         ])
     }
 
-    private func observationForTarget() -> AnyEncodableDictionary {
+    private func observationForTarget(cursor: Bool = false) -> AnyEncodableDictionary {
         let target = targetSnapshot()
-        return AnyEncodableDictionary(values: [
+        var values: [String: JSONValue] = [
             "pid": .integer(session.target.pid),
             "window_found": .bool(target != nil),
             "foreground": .bool(isForeground()),
@@ -331,7 +357,93 @@ final class InteractionDriver {
                 .object(["x": .double($0.bounds.origin.x), "y": .double($0.bounds.origin.y),
                          "width": .double($0.bounds.width), "height": .double($0.bounds.height)])
             } ?? .null
-        ])
+        ]
+        if cursor { values["cursor"] = cursorObservation() }
+        return AnyEncodableDictionary(values: values)
+    }
+
+    // Cursor-only pixels; no screen capture, event posting, or permission request.
+    // Pure limits are shared with the existing offline self-test.
+    private static func cursorBounds(_ w: Int, _ h: Int, _ bytes: Int,
+                                     _ hot: CGPoint) -> Bool {
+        (1...128).contains(w) && (1...128).contains(h) &&
+        (1...65536).contains(bytes) && hot.x.isFinite && hot.y.isFinite &&
+        hot.x >= 0 && hot.y >= 0 && hot.x < Double(w) && hot.y < Double(h)
+    }
+
+    private static func cursorStorage(width: Int, height: Int, row: Int,
+                                      plane: Int, planes: Int, planar: Bool) -> Int? {
+        guard !planar, planes == 1, cursorBounds(width, height, 1, .zero),
+              row > 0, row <= 65536 / height,
+              plane >= row * height, plane <= 65536 else { return nil }
+        return plane
+    }
+
+    private struct CursorBinding: Equatable {
+        let id: CGWindowID
+        let bounds: CGRect
+        let point: CGPoint
+    }
+
+    private func cursorBinding() throws -> CursorBinding {
+        guard isForeground(), let event = CGEvent(source: nil) else {
+            throw DriverError.denied("Cursor target is not foreground")
+        }
+        let point = event.location
+        let target = try requireTarget(point)
+        return CursorBinding(id: target.id, bounds: target.bounds, point: point)
+    }
+
+    private func cursorObservation() -> JSONValue {
+        let unavailable: JSONValue = .object(["supported": .bool(false),
+                                             "reason": .string("ownership_or_cursor_unavailable")])
+        do {
+            let before = try cursorBinding()
+            // currentCursor is helper-app-local and would report the wrong app.
+            guard let cursor = NSCursor.currentSystem else { return unavailable }
+            let image = cursor.image
+            let hot = cursor.hotSpot
+            guard image.size.width.isFinite, image.size.height.isFinite,
+                  image.size.width >= 1, image.size.width <= 128,
+                  image.size.height >= 1, image.size.height <= 128,
+                  (1...16).contains(image.representations.count) else { return unavailable }
+            // Never request TIFF or rasterize an unbounded/vector representation.
+            var total = 0
+            var first: NSBitmapImageRep?
+            for representation in image.representations {
+                guard let rep = representation as? NSBitmapImageRep,
+                      let storage = Self.cursorStorage(width: rep.pixelsWide,
+                        height: rep.pixelsHigh, row: rep.bytesPerRow,
+                        plane: rep.bytesPerPlane, planes: rep.numberOfPlanes,
+                        planar: rep.isPlanar) else { return unavailable }
+                total += storage
+                guard total <= 65536 else { return unavailable }
+                if first == nil { first = rep }
+            }
+            guard let rep = first, let cg = rep.cgImage else { return unavailable }
+            let w = rep.pixelsWide, h = rep.pixelsHigh
+            let pixelHot = CGPoint(x: hot.x * Double(w) / image.size.width,
+                                   y: hot.y * Double(h) / image.size.height)
+            guard Self.cursorBounds(w, h, w * h * 4, pixelHot) else { return unavailable }
+            var bytes = [UInt8](repeating: 0, count: w * h * 4)
+            let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+                guard let context = CGContext(data: buffer.baseAddress, width: w, height: h,
+                    bitsPerComponent: 8, bytesPerRow: w * 4,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue |
+                        CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+                context.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+                return true
+            }
+            guard drawn, try cursorBinding() == before else { return unavailable }
+            let data = Data(bytes)
+            return .object(["supported": .bool(true), "name_hint": .string("unknown"),
+                "width": .integer(w), "height": .integer(h),
+                "hot_x": .double(pixelHot.x), "hot_y": .double(pixelHot.y),
+                "pixel_format": .string("premultiplied-ARGB32-big-endian"),
+                "argb_base64": .string(data.base64EncodedString()),
+                "sha256": .string(sha256(data))])
+        } catch { return unavailable }
     }
 
     private func targetResult() -> TargetResult {

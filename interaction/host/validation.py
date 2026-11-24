@@ -42,7 +42,7 @@ OPERATIONS = {
 BASE_FIELDS = {"schema_version", "session_id", "sequence", "operation"}
 OPERATION_FIELDS = {
     "capabilities": set(),
-    "observe": set(),
+    "observe": {"cursor"},
     "focus": set(),
     "key": {"key"},
     "text": {"text"},
@@ -327,6 +327,11 @@ def validate_command(value: Any, session: Optional[Mapping[str, Any]] = None) ->
     if operation == "scroll" and "point" in root and (
             session is None or session.get("platform") != "macos"):
         _fail("command.point", "scroll point requires an explicit macos session")
+    if "cursor" in root:
+        if type(root["cursor"]) is not bool:
+            _fail("command.cursor", "must be boolean")
+        if session is None or session.get("platform") not in {"linux", "macos"}:
+            _fail("command.cursor", "requires explicit linux or macos session")
     if "key" in root:
         key = _object(root["key"], "command.key")
         _keys(key, "command.key", ("name",), ("character", "modifiers", "phase"))

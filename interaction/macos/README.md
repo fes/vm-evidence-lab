@@ -88,3 +88,22 @@ key-up. Explicit `down` and `up` phases retain their requested modifier flags.
 * No video implementation is provided. The driver does not provide a host TCC
   bypass, launch targets, read arbitrary clipboard content, or write outside
   the artifact root.
+
+
+## Optional cursor-only observation
+
+`{"schema_version":1,"session_id":"example","sequence":1,"operation":"observe","cursor":true}`
+adds a single bounded `observation.cursor` sample under the existing observe
+grant. Omitted/false leaves ordinary observation unchanged and never samples
+the cursor. Host validation requires an explicit Linux/macOS session.
+The target must be foreground, visible and own the pointer hit before and after
+the read; PID/window/geometry/pointer changes discard all image data.
+A supported sample contains dimensions/hotspot, `name_hint: "unknown"`, SHA256
+and base64 premultiplied ARGB32 bytes in big-endian channel order. Images are
+limited to 128×128/65,536 output bytes; names are not shape authority. Failure
+returns only `supported:false` and a finite reason. No subscriptions or input.
+
+Uses public nullable `NSCursor.currentSystem` in the existing AppKit import;
+helper-local `currentCursor` is not a substitute. Nil, vector/oversized or
+otherwise unavailable representations return an unsupported sample. This never
+requests TCC or substitutes ScreenCaptureKit/general screen capture.

@@ -2,6 +2,8 @@
 """Restricted interaction-session driver for an X11 guest desktop."""
 
 import argparse
+import base64
+import ctypes
 import hashlib
 import json
 import math
@@ -109,7 +111,7 @@ def validate_point(value):
 def validate_command(value):
     exact_keys(value, ("schema_version", "session_id", "sequence", "operation"),
                ("key", "text", "point", "destination", "button", "duration_ms", "scroll",
-                "wait", "artifact", "clipboard", "video"))
+                "wait", "artifact", "clipboard", "video", "cursor"))
     if not integer(value["schema_version"], 1, 1):
         raise DriverError("unsupported command schema_version")
     if not isinstance(value["session_id"], str) or not IDENTIFIER.fullmatch(value["session_id"]):
@@ -130,6 +132,10 @@ def validate_command(value):
     if any(key not in value for key in expected):
         raise DriverError("operation is missing a required payload")
     allowed = {"schema_version", "session_id", "sequence", "operation"} | set(expected)
+    if op == "observe":
+        allowed.add("cursor")
+    if "cursor" in value and type(value["cursor"]) is not bool:
+        raise DriverError("cursor must be boolean")
     if op in ("click", "double-click", "drag"):
         allowed.update({"button", "duration_ms"})
     if not set(value).issubset(allowed):
@@ -469,12 +475,143 @@ def accessibility_observation(target):
         return {"at_spi_available": False, "native_error": str(exc)[:512]}
 
 
-def observe(target, accessibility=False):
+# Xlib uses unsigned long for each pixel, including LP64; only low ARGB32 bits
+# are image data. No cursor-name pointer is read (theme names are untrusted).
+class XFixesCursorImage(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_short), ("y", ctypes.c_short),
+                ("width", ctypes.c_ushort), ("height", ctypes.c_ushort),
+                ("xhot", ctypes.c_ushort), ("yhot", ctypes.c_ushort),
+                ("serial", ctypes.c_ulong),
+                ("pixels", ctypes.POINTER(ctypes.c_ulong))]
+
+
+def cursor_argb(image):
+    w, h = image.width, image.height
+    if not (1 <= w <= 128 and 1 <= h <= 128 and
+            image.xhot < w and image.yhot < h and image.pixels):
+        raise DriverError("cursor bounds unavailable", "unsupported")
+    return b"".join((int(image.pixels[i]) & 0xffffffff).to_bytes(4, "big")
+                    for i in range(w * h))
+
+
+def xfixes_cursor():
+    # Called only in the bounded child below: even XOpenDisplay may block.
+    # Existing system libraries only; never install or capture a screen.
+    x11 = ctypes.CDLL("libX11.so.6")
+    fixes = ctypes.CDLL("libXfixes.so.3")
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    x11.XFree.argtypes = [ctypes.c_void_p]
+    fixes.XFixesQueryExtension.argtypes = [ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
+    fixes.XFixesQueryVersion.argtypes = fixes.XFixesQueryExtension.argtypes
+    fixes.XFixesGetCursorImage.argtypes = [ctypes.c_void_p]
+    fixes.XFixesGetCursorImage.restype = ctypes.POINTER(XFixesCursorImage)
+    display = x11.XOpenDisplay(None)
+    if not display:
+        raise DriverError("cursor display unavailable", "unsupported")
+    try:
+        a, b = ctypes.c_int(), ctypes.c_int()
+        if not fixes.XFixesQueryExtension(display, ctypes.byref(a), ctypes.byref(b)):
+            raise DriverError("cursor extension unavailable", "unsupported")
+        major, minor = ctypes.c_int(1), ctypes.c_int(0)
+        if not fixes.XFixesQueryVersion(display, ctypes.byref(major), ctypes.byref(minor)) or major.value < 1:
+            raise DriverError("cursor version unavailable", "unsupported")
+        pointer = fixes.XFixesGetCursorImage(display)
+        if not pointer:
+            raise DriverError("cursor image unavailable", "unsupported")
+        try:
+            image = pointer.contents
+            data = cursor_argb(image)
+            return {"supported": True, "name_hint": "unknown",
+                    "width": image.width, "height": image.height,
+                    "hot_x": image.xhot, "hot_y": image.yhot,
+                    "pixel_format": "premultiplied-ARGB32-big-endian",
+                    "argb_base64": base64.b64encode(data).decode("ascii"),
+                    "sha256": hashlib.sha256(data).hexdigest()}, (image.x, image.y)
+        finally:
+            x11.XFree(ctypes.cast(pointer, ctypes.c_void_p))
+    finally:
+        x11.XCloseDisplay(display)
+
+
+# Fixed child, not a new CLI operation or helper. run_command uses the remaining
+# COMMAND_DEADLINE; subprocess.run kills and reaps this sole child on timeout.
+# The child starts no descendants and emits at most one bounded JSON document.
+CURSOR_CHILD = """
+import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location('cursor_driver',sys.argv[1])
+driver=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(driver)
+try:
+    sample,point=driver.xfixes_cursor()
+    output=json.dumps({'sample':sample,'point':point},separators=(',',':')).encode()
+    if len(output)>90000:
+        raise ValueError()
+except Exception:
+    output=b'{"unsupported":true}'
+sys.stdout.buffer.write(output)
+"""
+
+
+def bounded_cursor_sample():
+    raw = run_command([sys.executable, "-c", CURSOR_CHILD,
+                       str(Path(__file__).resolve())], timeout=2)
+    if len(raw) > 90000:
+        raise DriverError("cursor result exceeds bound", "unsupported")
+    try:
+        result = json.loads(raw)
+        sample, point = result["sample"], result["point"]
+        exact_keys(result, ("sample", "point"))
+        exact_keys(sample, ("supported", "name_hint", "width", "height", "hot_x",
+                            "hot_y", "pixel_format", "argb_base64", "sha256"))
+        w, h = sample["width"], sample["height"]
+        if not (sample["supported"] is True and sample["name_hint"] == "unknown" and
+                integer(w, 1, 128) and integer(h, 1, 128) and
+                integer(sample["hot_x"], 0, w - 1) and integer(sample["hot_y"], 0, h - 1) and
+                sample["pixel_format"] == "premultiplied-ARGB32-big-endian" and
+                isinstance(point, list) and len(point) == 2 and
+                all(integer(v, -32768, 32767) for v in point) and
+                isinstance(sample["argb_base64"], str) and
+                len(sample["argb_base64"]) <= 87384):
+            raise ValueError()
+        data = base64.b64decode(sample["argb_base64"], validate=True)
+        if len(data) != w * h * 4 or hashlib.sha256(data).hexdigest() != sample["sha256"]:
+            raise ValueError()
+        return sample, tuple(point)
+    except (ValueError, KeyError, TypeError):
+        raise DriverError("cursor result unavailable", "unsupported")
+
+
+def cursor_binding(target):
+    target.require_cursor_owned()
+    point = target.cursor_window_pid()
+    return target.pid, target.window_id, tuple(sorted(target.geometry.items())), point
+
+
+def cursor_observation(target):
+    try:
+        before = cursor_binding(target)
+        sample, point = bounded_cursor_sample()
+        after = cursor_binding(target)
+        if before != after or point != before[-1]:
+            return {"supported": False, "reason": "ownership_changed"}
+        return sample
+    except DriverError:
+        return {"supported": False, "reason": "ownership_or_cursor_unavailable"}
+    except (OSError, AttributeError):
+        return {"supported": False, "reason": "cursor_api_unavailable"}
+
+
+def observe(target, accessibility=False, cursor=False):
     target.require()
     title = xdotool("getwindowname", target.window_id).decode("utf-8", "replace").rstrip("\n")
     result = {"window_id": target.window_id, "title": title, "accessibility": None}
     if accessibility:
         result["accessibility"] = accessibility_observation(target)
+    if cursor:
+        result["cursor"] = cursor_observation(target)
     return result
 
 
@@ -747,7 +884,8 @@ def execute(session, command, artifact_directory, target):
     if operation == "capabilities":
         return capabilities(session), [], "capabilities enumerated"
     if operation == "observe":
-        observation = observe(target, "accessibility" in session["grants"])
+        observation = observe(target, "accessibility" in session["grants"],
+                              command.get("cursor", False))
     elif operation == "focus":
         target.focus()
         observation = {"focused": True}

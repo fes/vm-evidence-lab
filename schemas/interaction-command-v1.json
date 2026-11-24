@@ -36,6 +36,7 @@
         "video-stop"
       ]
     },
+    "cursor": { "type": "boolean", "description": "Opt-in bounded cursor-only sample on Linux/macOS observe; absent keeps ordinary observation unchanged." },
     "key": {
       "type": "object",
       "additionalProperties": false,

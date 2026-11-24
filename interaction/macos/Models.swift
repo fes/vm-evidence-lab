@@ -27,6 +27,7 @@ struct CommandDocument: Decodable {
     let session_id: String
     let sequence: Int
     let operation: String
+    let cursor: Bool?
     let key: KeyRequest?
     let text: TextRequest?
     let point: PointRequest?
@@ -238,7 +239,7 @@ enum StrictJSON {
     static let commandKeys = Set(["schema_version", "session_id", "sequence", "operation",
                                   "key", "text", "point", "destination", "button",
                                   "duration_ms", "scroll", "wait", "artifact",
-                                  "clipboard", "video"])
+                                  "clipboard", "video", "cursor"])
 
     static func checkObject(_ value: Any, keys: Set<String>, path: String) throws {
         guard let object = value as? [String: Any] else {
@@ -269,6 +270,9 @@ enum StrictJSON {
         let allowed = commandKeys
         try checkObject(raw, keys: allowed, path: "command")
         let object = raw as! [String: Any]
+        if object["cursor"] is NSNull {
+            throw DriverError.invalid("command.cursor must be boolean")
+        }
         if let value = object["key"] {
             try checkObject(value, keys: ["name", "character", "modifiers", "phase"], path: "command.key")
         }
