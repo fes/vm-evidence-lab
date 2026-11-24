@@ -556,7 +556,7 @@ sys.stdout.buffer.write(output)
 
 
 def bounded_cursor_sample():
-    raw = run_command([sys.executable, "-c", CURSOR_CHILD,
+    raw = run_command([sys.executable, "-B", "-c", CURSOR_CHILD,
                        str(Path(__file__).resolve())], timeout=2)
     if len(raw) > 90000:
         raise DriverError("cursor result exceeds bound", "unsupported")

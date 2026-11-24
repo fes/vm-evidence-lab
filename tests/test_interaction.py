@@ -430,6 +430,26 @@ class CursorObservationTests(unittest.TestCase):
         with mock.patch.object(self.driver, "run_command", return_value=raw):
             self.assertEqual(self.driver.bounded_cursor_sample(), (sample, (2, 3)))
 
+    def test_cursor_child_does_not_create_bytecode_cache(self):
+        sample = {"supported": True, "name_hint": "unknown", "width": 1, "height": 1,
+                  "hot_x": 0, "hot_y": 0, "pixel_format": "premultiplied-ARGB32-big-endian",
+                  "argb_base64": "/xI0Vg==",
+                  "sha256": __import__("hashlib").sha256(bytes.fromhex("ff123456")).hexdigest()}
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = pathlib.Path(tmp) / "driver.py"
+            stub.write_text("def xfixes_cursor():\n    return " + repr(sample) + ", (2, 3)\n")
+            environment = {k: v for k, v in os.environ.items()
+                           if k not in {"PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX"}}
+            # Apple Python may default to a user-global cache prefix. Make any
+            # child cache writes visible only inside this private test fixture.
+            environment["PYTHONPYCACHEPREFIX"] = str(pathlib.Path(tmp) / "__pycache__")
+            # Actual fixed child/import path and strict result parser; the stub
+            # returns one bounded cursor and never loads X11 or touches a display.
+            with mock.patch.object(self.driver, "__file__", str(stub)), \
+                 mock.patch.dict(os.environ, environment, clear=True):
+                self.assertEqual(self.driver.bounded_cursor_sample(), (sample, (2, 3)))
+            self.assertEqual(sorted(p.name for p in pathlib.Path(tmp).iterdir()), ["driver.py"])
+
     def test_default_observation_does_not_touch_cursor_api(self):
         target = mock.Mock(window_id="123")
         with mock.patch.object(self.driver, "xdotool", return_value=b"title\n"), \
