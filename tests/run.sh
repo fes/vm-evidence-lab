@@ -25,6 +25,18 @@ done
 "$python_command" "$root/tests/test_provision.py"
 "$python_command" "$root/tests/test_macos_interaction_wrapper.py"
 
+# Existing pure driver mode only: no bundle/signing/registration or target query.
+if [ "$(uname -s)" = Darwin ]; then
+    xcrun swiftc -swift-version 5 \
+      -framework Foundation -framework AppKit -framework ApplicationServices \
+      -framework CoreGraphics -framework CryptoKit \
+      "$root/interaction/macos/Models.swift" "$root/interaction/macos/Driver.swift" \
+      "$root/interaction/macos/main.swift" -o "$work/macos-driver-self-test"
+    "$work/macos-driver-self-test" --self-test >"$work/macos-self-test.json"
+    jq -e '.status == "pass" and .posted_input == false and .inspected_applications == false' \
+      "$work/macos-self-test.json" >/dev/null
+fi
+
 cp "$root/tests/fixtures/fake-adapter/policy.json" "$work/adapters/fake/policy.json"
 cp "$root/tests/fixtures/fake-adapter/linux.sh" "$work/adapters/fake/linux.sh"
 printf '%040d' 0 >"$work/adapters/fake/adapter-version.txt"

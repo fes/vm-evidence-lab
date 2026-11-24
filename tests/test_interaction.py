@@ -1,4 +1,9 @@
 import json
+import ctypes
+import importlib.util
+import time
+import os
+from unittest import mock
 import pathlib
 import subprocess
 import sys
@@ -326,6 +331,114 @@ class InteractionControllerTests(unittest.TestCase):
             validate_result(document, validate_session(session()), request)
             with self.assertRaises(InteractionError):
                 collect_artifacts(document, root, 4096)
+
+
+class CursorObservationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "linux_cursor_driver", ROOT / "interaction/linux/driver.py")
+        cls.driver = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.driver)
+
+    def test_cursor_opt_in_is_boolean_observe_only_and_platform_bound(self):
+        for value in (False, True):
+            request = command(operation="observe", cursor=value)
+            validate_command(request, session())
+            self.driver.validate_command(request)
+        for value in (1, "true", None):
+            with self.assertRaises(ValidationError):
+                validate_command(command(operation="observe", cursor=value), session())
+            with self.assertRaises(self.driver.DriverError):
+                self.driver.validate_command(command(operation="observe", cursor=value))
+        for request, target in ((command(cursor=True), session()),
+                                (command(operation="observe", cursor=True), session(platform="windows"))):
+            with self.assertRaises(ValidationError):
+                validate_command(request, target)
+        with self.assertRaises(ValidationError):
+            validate_command(command(operation="observe", cursor=True))
+
+    def test_lp64_pixels_are_normalized_to_four_argb_bytes(self):
+        pixels = (ctypes.c_ulong * 2)(0x12345678, ctypes.c_ulong(-1).value)
+        image = self.driver.XFixesCursorImage(0, 0, 2, 1, 1, 0, 0, pixels)
+        self.assertEqual(self.driver.cursor_argb(image), bytes.fromhex("12345678ffffffff"))
+        # C unsigned-long ABI, not a uint32 pointer on 64-bit Linux.
+        self.assertEqual(self.driver.XFixesCursorImage._fields_[-1][1]._type_, ctypes.c_ulong)
+
+    def test_bounds_refuse_before_reading_any_pixel(self):
+        image = self.driver.XFixesCursorImage()
+        for w, h, x, y in ((0, 1, 0, 0), (129, 1, 0, 0),
+                            (1, 129, 0, 0), (1, 1, 1, 0)):
+            image.width, image.height, image.xhot, image.yhot = w, h, x, y
+            with self.assertRaises(self.driver.DriverError):
+                self.driver.cursor_argb(image)
+        pixels = (ctypes.c_ulong * 16384)(0)
+        image.width = image.height = 128
+        image.xhot = image.yhot = 127
+        image.pixels = pixels
+        self.assertEqual(len(self.driver.cursor_argb(image)), 65536)
+
+    def test_ownership_race_and_unavailable_api_never_return_image(self):
+        binding = (1234, "123", (("width", 10),), (2, 3))
+        sample = {"supported": True, "argb_base64": "private-cursor"}
+        for changed in ((9999, binding[1], binding[2], binding[3]),
+                        (binding[0], "other", binding[2], binding[3]),
+                        (binding[0], binding[1], (("width", 11),), binding[3]),
+                        (binding[0], binding[1], binding[2], (3, 3))):
+            with mock.patch.object(self.driver, "cursor_binding", side_effect=[binding, changed]), \
+                 mock.patch.object(self.driver, "bounded_cursor_sample", return_value=(sample, (2, 3))):
+                result = self.driver.cursor_observation(object())
+                self.assertFalse(result["supported"])
+                self.assertNotIn("argb_base64", result)
+        with mock.patch.object(self.driver, "cursor_binding", return_value=binding), \
+             mock.patch.object(self.driver, "bounded_cursor_sample", side_effect=OSError("not installed")):
+            self.assertEqual(self.driver.cursor_observation(object()),
+                             {"supported": False, "reason": "cursor_api_unavailable"})
+        with mock.patch.object(self.driver, "cursor_binding", side_effect=[binding, binding]), \
+             mock.patch.object(self.driver, "bounded_cursor_sample", return_value=(sample, (2, 3))):
+            self.assertEqual(self.driver.cursor_observation(object()), sample)
+
+    def test_bounded_child_uses_remaining_deadline_and_is_reaped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile = pathlib.Path(tmp) / "child.pid"
+            script = ("import os,time,pathlib;pathlib.Path(" + repr(str(pidfile)) +
+                      ").write_text(str(os.getpid()));time.sleep(30)")
+            previous = self.driver.COMMAND_DEADLINE
+            self.driver.COMMAND_DEADLINE = time.monotonic() + 0.5
+            try:
+                with mock.patch.object(self.driver, "CURSOR_CHILD", script):
+                    with self.assertRaises(self.driver.DriverError):
+                        self.driver.bounded_cursor_sample()
+                self.assertTrue(pidfile.exists(), "child must actually start")
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(int(pidfile.read_text()), 0)
+            finally:
+                self.driver.COMMAND_DEADLINE = previous
+
+    def test_child_result_cap_and_strict_finite_schema(self):
+        for raw in (b"x" * 90001, b'{"unsupported":true}',
+                    b'{"sample":{},"point":[0,0]}'):
+            with mock.patch.object(self.driver, "run_command", return_value=raw):
+                with self.assertRaises(self.driver.DriverError):
+                    self.driver.bounded_cursor_sample()
+        data = bytes.fromhex("ff123456")
+        sample = {"supported": True, "name_hint": "unknown", "width": 1, "height": 1,
+                  "hot_x": 0, "hot_y": 0, "pixel_format": "premultiplied-ARGB32-big-endian",
+                  "argb_base64": " /xI0Vg==".strip(),
+                  "sha256": __import__("hashlib").sha256(data).hexdigest()}
+        raw = json.dumps({"sample": sample, "point": [2, 3]}).encode()
+        with mock.patch.object(self.driver, "run_command", return_value=raw):
+            self.assertEqual(self.driver.bounded_cursor_sample(), (sample, (2, 3)))
+
+    def test_default_observation_does_not_touch_cursor_api(self):
+        target = mock.Mock(window_id="123")
+        with mock.patch.object(self.driver, "xdotool", return_value=b"title\n"), \
+             mock.patch.object(self.driver, "cursor_observation") as cursor:
+            self.assertEqual(self.driver.observe(target),
+                             {"window_id": "123", "title": "title", "accessibility": None})
+            cursor.assert_not_called()
+            self.driver.observe(target, cursor=True)
+            cursor.assert_called_once_with(target)
 
 
 class DriverSelfTestTests(unittest.TestCase):

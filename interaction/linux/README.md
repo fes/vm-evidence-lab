@@ -29,3 +29,22 @@ are never overwritten. Modifier keys are released after keyboard operations.
 Requirements: Python 3, an X11 desktop, `xdotool`, `wmctrl`, and `xwininfo`.
 Screenshots, clipboard, wheel, and AT-SPI additionally depend on the tools
 described above. No VM or display is started by this driver.
+
+
+## Optional cursor-only observation
+
+`{"schema_version":1,"session_id":"example","sequence":1,"operation":"observe","cursor":true}`
+adds a single bounded `observation.cursor` sample under the existing observe
+grant. Omitted/false leaves ordinary observation unchanged and never samples
+the cursor. Host validation requires an explicit Linux/macOS session.
+The target must be foreground, visible and own the pointer hit before and after
+the read; PID/window/geometry/pointer changes discard all image data.
+A supported sample contains dimensions/hotspot, `name_hint: "unknown"`, SHA256
+and base64 premultiplied ARGB32 bytes in big-endian channel order. Images are
+limited to 128×128/65,536 output bytes; names are not shape authority. Failure
+returns only `supported:false` and a finite reason. No subscriptions or input.
+
+Existing X11 display authorization and optional already-installed `libX11.so.6`/
+`libXfixes.so.3` are required; missing APIs/extensions return an unsupported sample.
+Pixels use Xlib unsigned-long storage and are normalized to four ARGB bytes,
+including on LP64. No cursor-name string is read.
