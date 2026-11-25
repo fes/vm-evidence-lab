@@ -1238,7 +1238,10 @@ function Write-InteractionResult {
     param([string] $Path, [object] $Result, [string] $ArtifactDirectory)
     $json = $Result | ConvertTo-Json -Depth 16 -Compress
     if (-not $Path) {
-        Write-Output $json
+        # The transport reads UTF-8 bytes independently of the console code page.
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json + [Environment]::NewLine)
+        $stdout = [Console]::OpenStandardOutput()
+        $stdout.Write($bytes, 0, $bytes.Length)
         return
     }
     $resolvedArtifact = [IO.Path]::GetFullPath($ArtifactDirectory)

@@ -101,6 +101,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Windows driver compilation/self-test failed.' }
     & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $root 'tests\test-windows-interaction-target.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'Windows target selector regression failed.' }
+    python (Join-Path $root 'tests\test_windows_interaction_stdout.py')
+    if ($LASTEXITCODE -ne 0) { throw 'Windows driver stdout regression failed.' }
     Write-Output 'Windows contract tests passed.'
 } finally {
     if (Test-Path -LiteralPath $work) {
