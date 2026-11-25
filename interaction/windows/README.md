@@ -23,11 +23,11 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\driver.ps1 `
   -ArtifactDirectory artifacts -ResultPath result.json
 ```
 
-If `-ResultPath` is omitted, the exact interaction-result v1 JSON is written
-to stdout. `-SelfTest` validates request and path rules without querying a
-window or sending input. A `capabilities` command likewise sends no input and
-reports native availability. Video start/stop always return structured
-`unsupported` results.
+If `-ResultPath` is omitted, stdout contains one interaction-result v1 JSON
+line encoded as UTF-8 without a byte order mark. `-SelfTest` validates request
+and path rules without querying a window or sending input. A `capabilities`
+command likewise sends no input and reports native availability. Video
+start/stop always return structured `unsupported` results.
 
 Clipboard sentinel operations require an STA process. Screenshot artifacts
 are PNGs beneath `-ArtifactDirectory`, named only with the schema-valid
