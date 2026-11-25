@@ -12,6 +12,7 @@ using System;
 public static class EvidenceNative {
  public struct RECT { public int Left, Top, Right, Bottom; }
  public static int Mode = 0;
+ public static int SecondaryExtendedStyle;
  public static int ClickCase, DownCount, UpCount, FocusCalls, MovementOnly, LastUpFlags;
  public static int CursorX,CursorY;
  public static int CursorCase, SnapshotCalls, CursorReads;
@@ -75,6 +76,9 @@ public static class EvidenceNative {
  public static IntPtr[] WindowsForPid(int pid) { return Mode==3 ? new [] {new IntPtr(3)} : new [] {new IntPtr(1),new IntPtr(2),new IntPtr(3)}; }
  public static int WindowPid(IntPtr h) { return OwnerPid; }
  public static bool Visible(IntPtr h) { return Mode!=2 && (h.ToInt32()==2 || ((Mode==1 || Mode==3) && h.ToInt32()==3)); }
+ public static bool IsToolOrNoActivateWindow(IntPtr h) {
+  return h.ToInt32()==3 && (SecondaryExtendedStyle & (0x80 | 0x08000000)) != 0;
+ }
  public static bool Foreground(IntPtr h) { return !Background && h.ToInt32()==2; }
  public static bool Rectangle(IntPtr h,out RECT r) { r=new RECT(); if(h.ToInt32()!=1) {r.Right=400;r.Bottom=300;} return true; }
 }
@@ -89,6 +93,16 @@ $session=[pscustomobject]@{target=[pscustomobject]@{pid=123}}
 $state=Get-TargetState $session
 if ($state.Handle.ToInt32() -ne 2 -or -not $state.Visible) { throw 'Hidden first HWND selected' }
 [EvidenceNative]::Mode=1
+foreach ($style in @(0x80, 0x08000000)) {
+    [EvidenceNative]::SecondaryExtendedStyle=$style
+    $state=Get-TargetState $session
+    if ($state.Handle.ToInt32() -ne 2 -or -not $state.Visible) { throw 'Visible framework HWND blocked the default target' }
+    $session.target | Add-Member -NotePropertyName window_index -NotePropertyValue 2
+    $explicit=Get-TargetState $session
+    if ($explicit.Handle.ToInt32() -ne 3 -or -not $explicit.Visible) { throw 'Explicit selection of a tool/no-activate HWND changed' }
+    $session.target.PSObject.Properties.Remove('window_index')
+}
+[EvidenceNative]::SecondaryExtendedStyle=0
 $refused=$false
 try { Get-TargetState $session | Out-Null } catch { $refused=$_.Exception.Message -like '*exactly one visible*' }
 if (-not $refused) { throw 'Ambiguous visible windows accepted' }
@@ -110,7 +124,7 @@ $session.target.PSObject.Properties.Remove('window_index')
 $refused=$false
 try { Get-TargetState $session | Out-Null } catch { $refused=$_.Exception.Message -like '*exactly one visible*' }
 if (-not $refused) { throw 'Missing visible target accepted' }
-Write-Output 'Windows target selector regression passed (hidden default, ambiguity, explicit index, missing index).'
+Write-Output 'Windows target selector regression passed (framework windows, ambiguity, explicit index, missing index).'
 
 # Execute the actual screenshot return statement with bounded metadata fixtures.
 # Its caller collects pipeline output with @(); an extra unary comma nests it.
