@@ -78,6 +78,8 @@ public static class EvidenceNative {
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT point);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
@@ -115,6 +117,10 @@ public static class EvidenceNative {
         return (int)pid;
     }
     public static bool Visible(IntPtr hwnd) { return IsWindowVisible(hwnd); }
+    public static bool IsToolOrNoActivateWindow(IntPtr hwnd) {
+        const int extendedStyle = -20, toolWindow = 0x80, noActivate = 0x08000000;
+        return (GetWindowLong(hwnd, extendedStyle) & (toolWindow | noActivate)) != 0;
+    }
     public static bool Foreground(IntPtr hwnd) { return GetForegroundWindow() == hwnd; }
     public static bool Rectangle(IntPtr hwnd, out RECT rect) {
         return GetWindowRect(hwnd, out rect);
@@ -538,12 +544,13 @@ function Get-TargetState {
         $index = [int] $Session.target.window_index
         $handle = if ($index -lt $handles.Count) { $handles[$index] } else { [IntPtr]::Zero }
     } else {
-        # Frameworks also own hidden IME/message windows. Never guess between
-        # multiple visible windows or silently choose a foreground replacement.
+        # Framework event targets can be visible tool or non-activating windows.
+        # Refuse ambiguity between the remaining candidates.
         $candidates = @($handles | Where-Object {
             $candidateRect = New-Object EvidenceNative+RECT
             [EvidenceNative]::WindowPid($_) -eq [int] $Session.target.pid -and
                 [EvidenceNative]::Visible($_) -and
+                -not [EvidenceNative]::IsToolOrNoActivateWindow($_) -and
                 [EvidenceNative]::Rectangle($_, [ref] $candidateRect) -and
                 $candidateRect.Right -gt $candidateRect.Left -and
                 $candidateRect.Bottom -gt $candidateRect.Top

@@ -32,8 +32,11 @@ reports native availability. Video start/stop always return structured
 Clipboard sentinel operations require an STA process. Screenshot artifacts
 are PNGs beneath `-ArtifactDirectory`, named only with the schema-valid
 logical artifact name; existing destinations are not overwritten. Window
-focus, screenshots, and accessibility are restricted to the session PID and
-its zero-based `window_index`. Modifier keys are explicitly released in
+focus, screenshots, and accessibility are restricted to the session PID. A
+supplied zero-based `window_index` keeps its position in the PID's full window
+list. With no index, the driver requires exactly one visible, positive-area
+window without the tool-window or no-activate extended styles.
+Modifier keys are explicitly released in
 `finally` blocks, including after failed keyboard operations.
 
 No VM is started or stopped by the driver. Native GUI behavior can only be
